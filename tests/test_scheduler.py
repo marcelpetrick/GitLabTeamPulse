@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from fastapi import FastAPI
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -134,3 +135,35 @@ async def test_cleanup_runs_on_interval(service: SyncService, clock: Clock) -> N
     await scheduler.tick()
     assert scheduler.is_running("cleanup")
     await scheduler.wait_idle()
+
+
+async def test_crashed_job_is_logged_and_persisted(
+    service: SyncService,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def explode(_trigger: str, _users: object = None) -> str:
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(service, "sync_selected", explode)
+    scheduler = Scheduler(service)
+    await scheduler.tick()
+    await scheduler.wait_idle()
+    assert "selected job crashed" in caplog.text
+    with session_factory() as session:
+        errors = store.list_errors(session)
+        assert any(e.subsystem == "scheduler" and "database is locked" in e.message for e in errors)
+
+
+def test_record_problem_survives_database_errors(
+    service: SyncService, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from sqlalchemy.exc import OperationalError
+
+    def broken(*_args: object, **_kwargs: object) -> None:
+        raise OperationalError("INSERT", {}, Exception("disk full"))
+
+    monkeypatch.setattr(store, "record_error", broken)
+    service.record_problem("scheduler", "x", "boom")
+    assert "could not persist diagnostic" in caplog.text

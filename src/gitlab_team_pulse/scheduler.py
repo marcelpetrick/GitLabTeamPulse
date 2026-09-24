@@ -102,7 +102,15 @@ class Scheduler:
 
     def _spawn(self, kind: str, factory: Callable[[], Awaitable[object]]) -> None:
         async def runner() -> object:
-            return await factory()
+            try:
+                return await factory()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # Never let a crash vanish inside an un-awaited task: log it and show it in the UI.
+                log.exception("%s job crashed", kind)
+                self.service.record_problem("scheduler", kind, f"{kind} job crashed: {exc!r}")
+                return "error"
 
         self._jobs[kind] = asyncio.create_task(runner(), name=f"teampulse-{kind}")
 
