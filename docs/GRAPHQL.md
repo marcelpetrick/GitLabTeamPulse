@@ -1,5 +1,8 @@
 # GraphQL in GitLab Team Pulse
 
+See also: [`ARCHITECTURE.md`](ARCHITECTURE.md) (where the GitLab client sits in the C4 model)
+and [`README.md`](../README.md).
+
 ## What GraphQL is
 
 GraphQL is a query language for APIs. GitLab's REST API has many fixed endpoints

@@ -20,13 +20,15 @@ The full per-commit history is `git log --oneline` (each subject ends with its v
 ### 0.2.9 – 0.2.10: documentation
 - [`docs/GRAPHQL.md`](docs/GRAPHQL.md): why and how GraphQL is used (timelogs, epics).
 
-### 0.2.11 – 0.2.14: second review round
+### 0.2.11 – 0.2.16: second review round and architecture docs
 - GraphQL errors are classified: only schema, license and permission errors count as a missing
   capability. Transient errors fail the dataset and keep last-known-good data, and epics that
   worked before are never dropped silently.
 - Only the cards a running sync covers show "refreshing".
 - The first page load fetches only the routed view's data.
 - Changelog version ranges corrected.
+- Dependabot for Python, GitHub Actions and the Docker base image.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): C4 architecture overview with Mermaid diagrams.
 
 ## 0.1.x
 

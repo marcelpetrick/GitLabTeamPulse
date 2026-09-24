@@ -150,6 +150,10 @@ links pointing elsewhere are refused.
 
 ## Architecture
 
+The full C4 architecture (system context, containers, components, the refresh sequence, the
+freshness state model, the data model and the deployment view, all as Mermaid diagrams) is in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). In short:
+
 ```text
 Browser (HTML/CSS/ES modules, SVG charts)
    │  polls /api/status (data_version) · reads /api/dashboard, /api/users · PATCH selection · POST refresh
@@ -212,6 +216,8 @@ appended, e.g. `feat(docker): … (v0.1.0)`. See [`CHANGELOG.md`](CHANGELOG.md).
 ## Documentation
 
 - [`VISION.md`](VISION.md): full product requirements and acceptance criteria.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): C4 architecture overview with Mermaid
+  diagrams (context, containers, components, dynamic, data and deployment views).
 - [`docs/GRAPHQL.md`](docs/GRAPHQL.md): what GraphQL is, why it is used for timelogs and
   epics, and how many requests it saves compared with REST.
 - [`CHANGELOG.md`](CHANGELOG.md): release history.
