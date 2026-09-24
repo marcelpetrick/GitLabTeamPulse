@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCS = [ROOT / "README.md", ROOT / "CHANGELOG.md", *sorted((ROOT / "docs").glob("*.md"))]
+TOP_LEVEL = ("README.md", "CHANGELOG.md", "SECURITY.md")
+DOCS = [*(ROOT / name for name in TOP_LEVEL), *sorted((ROOT / "docs").glob("*.md"))]
 LINK = re.compile(r"\]\(([^)#\s]+)(?:#[^)]*)?\)")
 
 

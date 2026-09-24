@@ -221,3 +221,4 @@ appended, e.g. `feat(docker): … (v0.1.0)`. See [`CHANGELOG.md`](CHANGELOG.md).
 - [`docs/GRAPHQL.md`](docs/GRAPHQL.md): what GraphQL is, why it is used for timelogs and
   epics, and how many requests it saves compared with REST.
 - [`CHANGELOG.md`](CHANGELOG.md): release history.
+- [`SECURITY.md`](SECURITY.md): how to report vulnerabilities and the deployment assumptions.
