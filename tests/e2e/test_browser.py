@@ -49,7 +49,9 @@ def test_dashboard_refresh_theme_and_copyable_text(page: Page, stack: LiveStack)
     card = page.locator(f'article.card[data-user-id="{ALEX}"]')
     expect(card.locator(".work-table")).to_be_visible()
     expect(card.locator(".activity-item:visible")).to_have_count(5)
-    card.get_by_label("Recent activity").get_by_role("button", name=re.compile(r"Show all \d+")).click()
+    card.get_by_label("Recent activity").get_by_role(
+        "button", name=re.compile(r"Show all \d+")
+    ).click()
     assert card.locator(".activity-item:visible").count() > 5
     expect(card.locator(".chart svg")).to_have_count(2)
     expect(page.locator("#status-left")).to_contain_text("Last update")
