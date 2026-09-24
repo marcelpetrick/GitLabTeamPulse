@@ -16,7 +16,7 @@ from pydantic import SecretStr, ValidationError
 
 from gitlab_team_pulse import __version__, db, store
 from gitlab_team_pulse.app import create_app
-from gitlab_team_pulse.config import Settings, default_database_path
+from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.fake_gitlab import FAKE_TOKEN, create_fake_gitlab
 from gitlab_team_pulse.gitlab.errors import GitLabError
 from gitlab_team_pulse.logging_setup import configure_logging
@@ -196,7 +196,8 @@ async def _seed_demo(settings: Settings, select: int) -> None:
 
 def demo_settings(args: argparse.Namespace) -> Settings:
     database = (
-        Path(args.database) if args.database else default_database_path().with_name("demo.db")
+        # Next to the configured database, so the container demo lives on the /data volume.
+        Path(args.database) if args.database else Settings().database_path.with_name("demo.db")
     )
     return Settings(
         _env_file=None,
@@ -258,7 +259,9 @@ def build_parser() -> argparse.ArgumentParser:
     demo.add_argument("--port", type=int, default=8000)
     demo.add_argument("--gitlab-host", default="127.0.0.1")
     demo.add_argument("--gitlab-port", type=int, default=8081)
-    demo.add_argument("--database", help="SQLite path (default: demo.db next to the normal one)")
+    demo.add_argument(
+        "--database", help="SQLite path (default: demo.db next to TEAMPULSE_DATABASE_PATH)"
+    )
     demo.add_argument("--select", type=int, default=4, help="users to pre-select on first run")
     demo.add_argument("--refresh-seconds", type=int, default=600)
     demo.set_defaults(func=cmd_demo)

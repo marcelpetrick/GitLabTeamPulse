@@ -171,3 +171,12 @@ def test_module_entry_point(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("sys.argv", ["gitlab-team-pulse", "--version"])
     with pytest.raises(SystemExit):
         runpy.run_module("gitlab_team_pulse", run_name="__main__")
+
+
+def test_demo_database_follows_configured_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TEAMPULSE_DATABASE_PATH", "/data/teampulse.db")
+    settings = cli.demo_settings(cli.build_parser().parse_args(["demo"]))
+    assert settings.database_path == Path("/data/demo.db")
