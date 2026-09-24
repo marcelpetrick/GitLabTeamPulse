@@ -78,8 +78,8 @@ async def test_only_selected_users_are_crawled(
     before = fake_app.state.requests
     await service.sync_selected("scheduled")
     requests = fake_app.state.requests - before
-    # work (3 lists) + activity + timelogs + a handful of projects; never the whole instance
-    assert requests <= 5 + 6
+    # work (3 lists) + epics per top-level group (4) + activity + timelogs + a few projects
+    assert requests <= 5 + 4 + 6
     with session_factory() as session:
         assert count(session, ActivityEventRecord, user_id=3) == 0
 
@@ -266,7 +266,7 @@ async def test_projects_are_not_refetched_while_fresh(
     before = fake_app.state.requests
     clock.advance(minutes=10)
     await service.sync_selected("scheduled")
-    assert fake_app.state.requests - before == 5
+    assert 5 <= fake_app.state.requests - before <= 5 + 4  # no project metadata requests
 
 
 async def test_work_snapshot_drops_unassigned_items(
@@ -302,3 +302,39 @@ def test_selected_due(
         session.commit()
     assert not service.selected_due(clock.now)
     assert service.selected_due(clock.now + timedelta(minutes=10))
+
+
+async def test_epics_are_included_when_available(
+    service: SyncService, session_factory: sessionmaker[Session]
+) -> None:
+    await select_users(service, session_factory, ALEX)
+    assert await service.sync_selected("scheduled") == "ok"
+    assert service.runtime.epics == "available"
+    with session_factory() as session:
+        epics = list(session.scalars(select(WorkItemRecord).where(WorkItemRecord.kind == "epic")))
+        assert [e.reference for e in epics] == ["platform&1"]
+        assert epics[0].priority == "high"
+        assert epics[0].project_id is None
+
+
+async def test_missing_epic_capability_is_a_diagnostic_not_a_failure(
+    service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI, clock: Clock
+) -> None:
+    fake_app.state.epics_supported = False
+    await select_users(service, session_factory, ALEX)
+    assert await service.sync_selected("scheduled") == "ok"
+    assert service.runtime.epics == "unavailable"
+    with session_factory() as session:
+        errors = store.list_errors(session, include_resolved=False)
+        assert [(e.operation, e.severity) for e in errors] == [("epics", "warning")]
+        assert store.get_state(session, "work", ALEX).status == "ok"
+    before = fake_app.state.requests
+    clock.advance(minutes=10)
+    await service.sync_selected("scheduled")
+    assert fake_app.state.requests - before == 5  # no epic query until the recheck interval
+    fake_app.state.epics_supported = True
+    clock.advance(hours=1)
+    await service.sync_selected("scheduled")
+    assert service.runtime.epics == "available"
+    with session_factory() as session:
+        assert store.unresolved_error_count(session) == 0

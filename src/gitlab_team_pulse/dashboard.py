@@ -145,6 +145,12 @@ def _project_payload(
     }
 
 
+def _group_payload(reference: str) -> dict[str, Any] | None:
+    """Epics live in groups, not projects: show the group path from the reference."""
+    group = reference.split("&", 1)[0] if "&" in reference else ""
+    return {"id": None, "name": group, "path": group, "web_url": None} if group else None
+
+
 def local_days(settings: Settings, now: datetime) -> list[date]:
     today = now.astimezone(settings.tz).date()
     return [today - timedelta(days=offset) for offset in range(settings.activity_days - 1, -1, -1)]
@@ -212,7 +218,8 @@ class DashboardReader:
                 "assignees": item.assignees,
                 "draft": item.draft,
                 "relations": [relation],
-                "project": _project_payload(item.project_id, projects, self.settings),
+                "project": _project_payload(item.project_id, projects, self.settings)
+                or _group_payload(item.reference),
             }
         return {uid: list(items.values()) for uid, items in grouped.items()}
 
@@ -405,6 +412,7 @@ def build_status(
             "last_ok_at": runtime.last_upstream_ok_at,
         },
         "gitlab": {"configured": settings.gitlab_configured, "url": settings.gitlab_url or None},
+        "capabilities": {"epics": runtime.epics},
     }
 
 

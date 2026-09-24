@@ -62,6 +62,7 @@ def test_initial_status_is_never_synced(api: tuple[TestClient, AppContext]) -> N
     assert status["upstream"]["status"] == "unknown"
     assert status["gitlab"] == {"configured": True, "url": "http://fake.gitlab"}
     assert status["ui_poll_interval_seconds"] == 20
+    assert status["capabilities"] == {"epics": "unknown"}
 
 
 def test_user_directory_and_selection(api: tuple[TestClient, AppContext]) -> None:
@@ -108,6 +109,8 @@ def test_dashboard_payload(api: tuple[TestClient, AppContext]) -> None:
     assert updated == sorted(updated, reverse=True)
     assert all(w["web_url"].startswith("http://fake.gitlab/") for w in card["work"])
     assert all(w["project"]["path"] for w in card["work"])
+    epic = next(w for w in card["work"] if w["kind"] == "epic")
+    assert epic["project"] == {"id": None, "name": "platform", "path": "platform", "web_url": None}
     assert 0 < len(card["activity"]) <= 12
     assert card["activity_preview_count"] == 5
     assert len(card["activity_days"]) == 7

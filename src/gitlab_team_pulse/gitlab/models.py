@@ -332,3 +332,43 @@ def parse_timelog(payload: dict[str, Any]) -> Timelog:
         target_title=target.get("title") if target else None,
         web_url=(target.get("webUrl") if target else None) or project.get("webUrl"),
     )
+
+
+def _widget(node: dict[str, Any], key: str) -> Any:
+    for widget in node.get("widgets") or ():
+        if isinstance(widget, dict) and key in widget:
+            return widget[key]
+    return None
+
+
+def parse_epic(payload: dict[str, Any]) -> WorkItem:
+    """An epic from GraphQL ``Group.workItems(types: [EPIC])`` as a ``WorkItem``."""
+    updated_at = _dt(payload["updatedAt"])
+    if updated_at is None:
+        raise ValueError("updatedAt is empty")
+    labels = tuple(
+        str(label["title"]) for label in (_widget(payload, "labels") or {}).get("nodes") or ()
+    )
+    milestone = _widget(payload, "milestone")
+    assignees = (_widget(payload, "assignees") or {}).get("nodes") or ()
+    state = str(payload.get("state") or "OPEN").lower()
+    return WorkItem(
+        kind="epic",
+        gitlab_id=int(gid_to_int(payload["id"]) or 0),
+        iid=int(payload["iid"]),
+        project_id=None,
+        reference=str(payload.get("reference") or f"&{payload['iid']}"),
+        title=str(payload["title"]),
+        state="opened" if state == "open" else state,
+        labels=labels,
+        milestone=str(milestone["title"]) if isinstance(milestone, dict) else None,
+        priority=priority_from_labels(labels),
+        due_date=_date(_widget(payload, "dueDate")),
+        created_at=_dt(payload.get("createdAt")),
+        updated_at=updated_at,
+        closed_at=_dt(payload.get("closedAt")),
+        web_url=payload.get("webUrl") or None,
+        author=(payload.get("author") or {}).get("username"),
+        assignees=tuple(str(a["username"]) for a in assignees),
+        relation="assignee",
+    )

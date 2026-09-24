@@ -63,6 +63,7 @@ class FakeData:
     merge_requests: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
     timelogs: list[dict[str, Any]] = field(default_factory=list)
+    epics: list[dict[str, Any]] = field(default_factory=list)
     next_event_id: int = 1
 
 
@@ -211,6 +212,27 @@ def build_data(now: datetime | None = None, seed: int = 7) -> FakeData:
                         "issue": issue,
                     }
                 )
+    for number, user in enumerate(active[:3], start=1):
+        updated = now - timedelta(days=number * 2)
+        data.epics.append(
+            {
+                "id": f"gid://gitlab/WorkItem/{9000 + number}",
+                "iid": number,
+                "group": "platform",
+                "title": ["Q4 platform reliability", "Self-service onboarding", "API v2"][
+                    number - 1
+                ],
+                "state": "OPEN" if number != 2 else "CLOSED",
+                "createdAt": _iso(updated - timedelta(days=30)),
+                "updatedAt": _iso(updated),
+                "closedAt": _iso(updated) if number == 2 else None,
+                "reference": f"platform&{number}",
+                "author": {"username": "root"},
+                "assignee": user["username"],
+                "labels": ["roadmap", "priority::high"] if number == 1 else ["roadmap"],
+                "dueDate": (now + timedelta(days=40)).date().isoformat(),
+            }
+        )
     return data
 
 
@@ -307,6 +329,7 @@ def create_fake_gitlab(
     app.state.admin = admin
     app.state.requests = 0
     app.state.graphql_error = None  # set to a message to simulate missing GraphQL capability
+    app.state.epics_supported = True
     app.state.latency = 0.0  # seconds added to every API response (makes "Refreshing" visible)
 
     def base(request: Request) -> str:
@@ -408,11 +431,50 @@ def create_fake_gitlab(
         chosen.sort(key=lambda e: (e["created_at"], e["id"]), reverse=True)
         return _paginate(request, chosen)
 
+    def graphql_epics(request: Request, variables: dict[str, Any]) -> JSONResponse:
+        if not app.state.epics_supported:
+            return JSONResponse(
+                {"errors": [{"message": "Field 'workItems' doesn't exist on type 'Group'"}]}
+            )
+        path = variables.get("fullPath")
+        if path not in {
+            project["path_with_namespace"].split("/")[0]
+            for project in app.state.data.projects.values()
+        }:
+            return JSONResponse({"data": {"group": None}})
+        nodes = [
+            {
+                "id": epic["id"],
+                "iid": epic["iid"],
+                "title": epic["title"],
+                "state": epic["state"],
+                "webUrl": f"{base(request)}/groups/{epic['group']}/-/epics/{epic['iid']}",
+                "createdAt": epic["createdAt"],
+                "updatedAt": epic["updatedAt"],
+                "closedAt": epic["closedAt"],
+                "reference": epic["reference"],
+                "author": epic["author"],
+                "widgets": [
+                    {"type": "ASSIGNEES", "assignees": {"nodes": [{"username": epic["assignee"]}]}},
+                    {"type": "LABELS", "labels": {"nodes": [{"title": t} for t in epic["labels"]]}},
+                    {"type": "MILESTONE", "milestone": None},
+                    {"type": "START_AND_DUE_DATE", "dueDate": epic["dueDate"]},
+                ],
+            }
+            for epic in app.state.data.epics
+            if epic["group"] == path and epic["assignee"] == variables.get("username")
+        ]
+        return JSONResponse(
+            {"data": {"group": {"workItems": {"nodes": nodes, "pageInfo": {"hasNextPage": False}}}}}
+        )
+
     @app.post("/api/graphql")
     async def graphql(request: Request) -> JSONResponse:
         body = await request.json()
         if app.state.graphql_error:
             return JSONResponse({"errors": [{"message": app.state.graphql_error}]})
+        if "workItems" in body.get("query", ""):
+            return graphql_epics(request, body.get("variables") or {})
         if "timelogs" not in body.get("query", ""):
             return JSONResponse({"errors": [{"message": "unsupported query"}]})
         variables = body.get("variables") or {}

@@ -36,6 +36,7 @@ from gitlab_team_pulse.gitlab.models import (
     WorkItem,
     WorkKind,
     guarded,
+    parse_epic,
     parse_event,
     parse_project,
     parse_timelog,
@@ -61,6 +62,29 @@ query($username: String!, $start: Time!, $end: Time!, $after: String) {
       mergeRequest { iid title webUrl }
     }
     pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+
+
+EPICS_QUERY = """
+query($fullPath: ID!, $username: String!, $updatedAfter: Time, $after: String) {
+  group(fullPath: $fullPath) {
+    workItems(types: [EPIC], assigneeUsernames: [$username], includeDescendants: true,
+              updatedAfter: $updatedAfter, first: 50, after: $after) {
+      nodes {
+        id iid title state webUrl createdAt updatedAt closedAt reference(full: true)
+        author { username }
+        widgets {
+          type
+          ... on WorkItemWidgetAssignees { assignees { nodes { username } } }
+          ... on WorkItemWidgetLabels { labels { nodes { title } } }
+          ... on WorkItemWidgetMilestone { milestone { title } }
+          ... on WorkItemWidgetStartAndDueDate { dueDate }
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
   }
 }
 """
@@ -330,3 +354,39 @@ class GitLabClient:
                 break
             cursor = page_info.get("endCursor")
         return result
+
+    async def get_user_epics(
+        self, username: str, group_paths: set[str], updated_after: datetime
+    ) -> list[WorkItem]:
+        """Epics assigned to ``username`` in the given top-level groups (and their subgroups).
+
+        Raises ``GitLabCapabilityError`` when the installation has no work-item epics
+        (older version or missing license); unknown or personal namespaces are skipped.
+        """
+        result: dict[int, WorkItem] = {}
+        for path in sorted(group_paths):
+            cursor: str | None = None
+            for _ in range(self._max_pages):
+                data = await self.graphql(
+                    EPICS_QUERY,
+                    {
+                        "fullPath": path,
+                        "username": username,
+                        "updatedAfter": updated_after.isoformat(),
+                        "after": cursor,
+                    },
+                )
+                group = data.get("group")
+                if not isinstance(group, dict):
+                    break
+                connection = group.get("workItems")
+                if not isinstance(connection, dict):
+                    raise GitLabResponseError("workItems: missing connection")
+                for node in connection.get("nodes") or []:
+                    epic = guarded("epic", parse_epic, node)
+                    result[epic.gitlab_id] = epic
+                page_info = connection.get("pageInfo") or {}
+                if not page_info.get("hasNextPage"):
+                    break
+                cursor = page_info.get("endCursor")
+        return list(result.values())

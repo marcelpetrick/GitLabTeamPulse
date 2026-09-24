@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from gitlab_team_pulse import retention, store
 from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.gitlab.client import GitLabClient
-from gitlab_team_pulse.gitlab.errors import GitLabError
+from gitlab_team_pulse.gitlab.errors import GitLabCapabilityError, GitLabError
 from gitlab_team_pulse.gitlab.models import ActivityEvent, Timelog, WorkItem
 from gitlab_team_pulse.logging_setup import get_logger
 from gitlab_team_pulse.models import SyncRun
@@ -35,6 +35,11 @@ NOT_CONFIGURED = (
     "GitLab is not configured: set TEAMPULSE_GITLAB_URL and a token "
     "(TEAMPULSE_GITLAB_TOKEN or a secret file)"
 )
+EPICS_UNAVAILABLE = (
+    "Epics are not available from this GitLab (GraphQL work items with type EPIC); "
+    "issues and merge requests are still shown"
+)
+EPICS_RECHECK = timedelta(hours=1)
 INCOMPLETE_DIRECTORY = (
     "The token user is not an administrator: GitLab may hide blocked, deactivated or "
     "internal accounts, so the directory can be incomplete"
@@ -73,6 +78,8 @@ class RuntimeState:
     active_kind: str | None = None
     last_upstream_error: str | None = None
     last_upstream_ok_at: datetime | None = None
+    epics: str = "unknown"  # unknown | available | unavailable
+    epics_checked_at: datetime | None = None
 
 
 class SyncService:
@@ -335,7 +342,7 @@ class SyncService:
     ) -> tuple[int, int, set[int]]:
         """Returns (successful datasets, attempted datasets, referenced project IDs)."""
         results = await asyncio.gather(
-            self._sync_work(client, user_id, run_id),
+            self._sync_work(client, user_id, username, run_id),
             self._sync_activity(client, user_id, run_id),
             self._sync_timelogs(client, user_id, username, run_id),
         )
@@ -403,18 +410,56 @@ class SyncService:
             store.bump_data_version(session)
             session.commit()
 
+    async def _epics(
+        self, client: GitLabClient, username: str, items: list[WorkItem], cutoff: datetime
+    ) -> list[WorkItem]:
+        """Best-effort epics for the top-level groups the user's work lives in."""
+        now = self.clock()
+        checked = self.runtime.epics_checked_at
+        if self.runtime.epics == "unavailable" and checked and now - checked < EPICS_RECHECK:
+            return []
+        groups = {i.reference.split("/", 1)[0] for i in items if "/" in i.reference}
+        if not groups:
+            return []
+        try:
+            epics = await client.get_user_epics(username, groups, cutoff)
+        except GitLabCapabilityError as exc:
+            self.runtime.epics = "unavailable"
+            self.runtime.epics_checked_at = now
+            with self.session_factory() as session:
+                store.record_error(
+                    session,
+                    subsystem="sync",
+                    operation="epics",
+                    message=f"{EPICS_UNAVAILABLE} ({exc})",
+                    severity="warning",
+                    now=now,
+                )
+                session.commit()
+            log.info("epics unavailable: %s", exc)
+            return []
+        if self.runtime.epics != "available":
+            with self.session_factory() as session:
+                store.resolve_errors(session, subsystem="sync", operation="epics", now=now)
+                session.commit()
+        self.runtime.epics = "available"
+        self.runtime.epics_checked_at = now
+        return epics
+
     async def _sync_work(
-        self, client: GitLabClient, user_id: int, run_id: str
+        self, client: GitLabClient, user_id: int, username: str, run_id: str
     ) -> tuple[bool, set[int]]:
         cutoff = self.clock() - timedelta(days=self.settings.work_window_days)
+
+        async def fetch() -> list[WorkItem]:
+            items = await client.get_user_work(user_id, cutoff)
+            return [*items, *await self._epics(client, username, items, cutoff)]
 
         def write(session: Session, items: list[WorkItem], now: datetime) -> tuple[None, set[int]]:
             store.replace_user_work(session, user_id, items, now)
             return None, {i.project_id for i in items if i.project_id is not None}
 
-        return await self._category(
-            "work", user_id, run_id, lambda: client.get_user_work(user_id, cutoff), write
-        )
+        return await self._category("work", user_id, run_id, fetch, write)
 
     async def _sync_activity(
         self, client: GitLabClient, user_id: int, run_id: str

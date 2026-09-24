@@ -301,3 +301,44 @@ def test_parse_timelog_variants() -> None:
     assert bare.summary is None
     with pytest.raises(GitLabResponseError):
         guarded("timelog", parse_timelog, {"id": "x", "spentAt": "", "timeSpent": 1})
+
+
+def test_parse_epic() -> None:
+    from gitlab_team_pulse.gitlab.models import parse_epic
+
+    epic = parse_epic(
+        {
+            "id": "gid://gitlab/WorkItem/77",
+            "iid": "3",
+            "title": "Roadmap",
+            "state": "OPEN",
+            "updatedAt": "2026-09-20T10:00:00Z",
+            "reference": "grp&3",
+            "widgets": [
+                {"type": "ASSIGNEES", "assignees": {"nodes": [{"username": "alex"}]}},
+                {"type": "LABELS", "labels": {"nodes": [{"title": "prio::2"}]}},
+                {"type": "MILESTONE", "milestone": {"title": "M9"}},
+                {"type": "START_AND_DUE_DATE", "dueDate": "2026-12-01"},
+                "junk",
+            ],
+        }
+    )
+    assert (epic.kind, epic.gitlab_id, epic.iid, epic.state) == ("epic", 77, 3, "opened")
+    assert epic.assignees == ("alex",)
+    assert epic.priority == "2"
+    assert epic.milestone == "M9"
+    assert epic.due_date == date(2026, 12, 1)
+    closed = parse_epic(
+        {
+            "id": "gid://gitlab/WorkItem/1",
+            "iid": 1,
+            "title": "x",
+            "state": "CLOSED",
+            "updatedAt": "2026-09-20T10:00:00Z",
+        }
+    )
+    assert closed.state == "closed"
+    assert closed.reference == "&1"
+    assert closed.labels == ()
+    with pytest.raises(GitLabResponseError):
+        guarded("epic", parse_epic, {"id": "x", "iid": 1, "title": "t", "updatedAt": ""})

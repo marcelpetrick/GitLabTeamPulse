@@ -341,3 +341,47 @@ async def test_recent_activity_limit_without_date(client: GitLabClient) -> None:
     params = route.calls.last.request.url.params
     assert "after" not in params
     assert params["per_page"] == "12"
+
+
+@respx.mock
+async def test_epics_skip_personal_namespaces_and_paginate(client: GitLabClient) -> None:
+    node = {
+        "id": "gid://gitlab/WorkItem/5",
+        "iid": 1,
+        "title": "E",
+        "updatedAt": "2026-09-20T10:00:00Z",
+    }
+    respx.post(f"{BASE}/api/graphql").mock(
+        side_effect=[
+            httpx.Response(200, json={"data": {"group": None}}),
+            httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "group": {
+                            "workItems": {
+                                "nodes": [node],
+                                "pageInfo": {"hasNextPage": True, "endCursor": "c"},
+                            }
+                        }
+                    }
+                },
+            ),
+            httpx.Response(
+                200,
+                json={"data": {"group": {"workItems": {"nodes": [node], "pageInfo": {}}}}},
+            ),
+        ]
+    )
+    now = datetime(2026, 9, 21, tzinfo=UTC)
+    epics = await client.get_user_epics("alex", {"alex", "grp"}, now)
+    assert [e.gitlab_id for e in epics] == [5]
+
+
+@respx.mock
+async def test_epics_malformed_connection(client: GitLabClient) -> None:
+    respx.post(f"{BASE}/api/graphql").mock(
+        return_value=httpx.Response(200, json={"data": {"group": {"workItems": None}}})
+    )
+    with pytest.raises(GitLabResponseError):
+        await client.get_user_epics("alex", {"grp"}, datetime(2026, 9, 21, tzinfo=UTC))
