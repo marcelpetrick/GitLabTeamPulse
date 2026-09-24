@@ -126,7 +126,8 @@ class App {
       this.usersVersion = status.users_version;
       this.renderChrome();
       this.dashboardView.onStatus(status);
-      if (changed || wasOffline) await this.loadViewData();
+      // Before the first route() there is no view yet; show() loads the right data itself.
+      if ((changed || wasOffline) && this.view) await this.loadViewData();
       if (anyChange && this.diagnostics.isOpen) this.diagnostics.load();
       if (!changed && this.view === "dashboard") this.dashboardView.updateRefreshButton();
     } catch {

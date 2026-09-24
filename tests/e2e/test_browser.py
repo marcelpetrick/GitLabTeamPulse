@@ -141,3 +141,12 @@ def test_empty_dashboard_links_to_people(page: Page, stack: LiveStack) -> None:
     page.keyboard.press("Escape")
     page.locator("body").press("/")
     expect(page.locator("#people-filter")).to_be_focused()
+
+
+def test_people_page_load_does_not_fetch_the_dashboard(page: Page, stack: LiveStack) -> None:
+    requested: list[str] = []
+    page.on("request", lambda request: requested.append(request.url))
+    page.goto(f"{stack.url}/#/people")
+    expect(page.locator(".people-row[data-user-id]")).to_have_count(32)
+    assert not any(url.endswith("/api/dashboard") for url in requested)
+    assert any(url.endswith("/api/users") for url in requested)
