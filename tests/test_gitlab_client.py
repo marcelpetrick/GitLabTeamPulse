@@ -385,3 +385,14 @@ async def test_epics_malformed_connection(client: GitLabClient) -> None:
     )
     with pytest.raises(GitLabResponseError):
         await client.get_user_epics("alex", {"grp"}, datetime(2026, 9, 21, tzinfo=UTC))
+
+
+@respx.mock
+async def test_redirect_is_a_configuration_error(client: GitLabClient, sleeps: Sleeps) -> None:
+    respx.get(f"{API}/user").mock(
+        return_value=httpx.Response(301, headers={"Location": "https://gitlab.test/users/sign_in"})
+    )
+    with pytest.raises(GitLabError, match=r"redirected \(301\).*TEAMPULSE_GITLAB_URL") as info:
+        await client.current_user()
+    assert info.value.status == 301
+    assert sleeps.calls == []

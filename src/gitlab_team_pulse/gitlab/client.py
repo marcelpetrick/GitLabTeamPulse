@@ -181,8 +181,15 @@ class GitLabClient:
             else:
                 status = response.status_code
                 log.debug("%s -> %d in %.2fs", label, status, time.monotonic() - started)
-                if status < 400:
+                if status < 300:
                     return response
+                if status < 400:
+                    location = response.headers.get("Location", "?")
+                    raise GitLabError(
+                        f"{label}: redirected ({status}) to {location} - check "
+                        "TEAMPULSE_GITLAB_URL (scheme, host and path must match exactly)",
+                        status=status,
+                    )
                 if status == 401:
                     raise GitLabAuthError(
                         f"{label}: authentication failed (401) - check the GitLab token",
