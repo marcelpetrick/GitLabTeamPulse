@@ -12,7 +12,8 @@ from datetime import datetime
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from gitlab_team_pulse.models import AppState, ErrorRecord, SyncRun, SyncState
+from gitlab_team_pulse.gitlab.models import GitLabUser
+from gitlab_team_pulse.models import AppState, ErrorRecord, SyncRun, SyncState, User
 
 DATA_VERSION = "data_version"
 MAX_MESSAGE = 2000
@@ -203,3 +204,58 @@ def latest_run(session: Session, kind: str) -> SyncRun | None:
     return session.scalars(
         select(SyncRun).where(SyncRun.kind == kind).order_by(SyncRun.started_at.desc()).limit(1)
     ).first()
+
+
+# ---------------------------------------------------------------------- users
+
+
+def upsert_users(session: Session, users: list[GitLabUser], now: datetime) -> tuple[int, int]:
+    """Insert new accounts and refresh metadata; selection state is never touched.
+
+    Accounts missing from a response are kept: one incomplete listing must not delete users.
+    """
+    existing = {user.id: user for user in session.scalars(select(User))}
+    added = updated = 0
+    for remote in users:
+        local = existing.get(remote.id)
+        if local is None:
+            local = User(id=remote.id, selected=False, first_seen_at=now)
+            session.add(local)
+            existing[remote.id] = local
+            added += 1
+        else:
+            updated += 1
+        local.username = remote.username
+        local.name = remote.name
+        local.avatar_url = remote.avatar_url
+        local.web_url = remote.web_url
+        local.created_at = remote.created_at
+        local.state = remote.state
+        local.account_type = remote.account_type
+        local.last_seen_at = now
+    return added, updated
+
+
+def list_users(session: Session) -> list[User]:
+    return list(session.scalars(select(User).order_by(User.created_at.desc(), User.id.desc())))
+
+
+def selected_users(session: Session) -> list[User]:
+    return list(session.scalars(select(User).where(User.selected.is_(True)).order_by(User.name)))
+
+
+def user_counts(session: Session) -> tuple[int, int]:
+    total = session.scalar(select(func.count()).select_from(User)) or 0
+    selected = session.scalar(select(func.count()).select_from(User).where(User.selected.is_(True)))
+    return int(total), int(selected or 0)
+
+
+def set_selected(session: Session, user_id: int, selected: bool, now: datetime) -> User | None:
+    """Change the global selection; returns None for unknown users."""
+    user = session.get(User, user_id)
+    if user is None:
+        return None
+    if user.selected != selected:
+        user.selected = selected
+        user.selected_at = now if selected else None
+    return user

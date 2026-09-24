@@ -1,3 +1,3 @@
 """GitLab Team Pulse: a people-centric activity dashboard for self-managed GitLab."""
 
-__version__ = "0.0.10"
+__version__ = "0.0.11"
