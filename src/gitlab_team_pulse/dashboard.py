@@ -98,7 +98,8 @@ def user_freshness(
     now: datetime,
 ) -> dict[str, Any]:
     """Per-user freshness: the oldest dataset success, error if any dataset failed."""
-    running = "selected" in runtime.running
+    scope = runtime.selected_scope
+    running = "selected" in runtime.running and (scope is None or user_id in scope)
     interval = settings.selected_refresh_interval_seconds
     categories: dict[str, Any] = {}
     successes: list[datetime | None] = []

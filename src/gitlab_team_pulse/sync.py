@@ -78,6 +78,7 @@ class RuntimeState:
     active_kind: str | None = None
     last_upstream_error: str | None = None
     last_upstream_ok_at: datetime | None = None
+    selected_scope: frozenset[int] | None = None  # users of the running selected run; None = all
     epics: str = "unknown"  # unknown | available | unavailable
     epics_checked_at: datetime | None = None
 
@@ -274,6 +275,7 @@ class SyncService:
         previously synchronized data.
         """
         run_id = self._begin("selected", trigger)
+        self.runtime.selected_scope = frozenset(user_ids) if user_ids is not None else None
         started = time.monotonic()
         try:
             with self.session_factory() as session:
@@ -314,6 +316,7 @@ class SyncService:
                 run_id, user_ids, status, summary, attempted=len(users), succeeded=succeeded
             )
         finally:
+            self.runtime.selected_scope = None
             self._end("selected")
 
     def _finish_selected(

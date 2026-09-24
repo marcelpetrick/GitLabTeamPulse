@@ -122,6 +122,7 @@ async def test_newly_selected_subset_run_leaves_global_state(
 ) -> None:
     await select_users(service, session_factory, ALEX, 3)
     assert await service.sync_selected("selection", [3]) == "ok"
+    assert service.runtime.selected_scope is None  # cleared after the run
     with session_factory() as session:
         assert store.find_state(session, "selected") is None
         assert store.find_state(session, "work", ALEX) is None

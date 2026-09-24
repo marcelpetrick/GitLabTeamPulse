@@ -158,6 +158,10 @@ def test_user_freshness_combines_datasets(settings: Settings) -> None:
     assert info["message"] == "timelogs: boom"
     running = dashboard.user_freshness(states, 1, RuntimeState(running={"selected"}), settings, NOW)
     assert running["status"] == "refreshing"
+    other_user_run = RuntimeState(running={"selected"}, selected_scope=frozenset({2}))
+    assert dashboard.user_freshness(states, 1, other_user_run, settings, NOW)["status"] == "error"
+    own_run = RuntimeState(running={"selected"}, selected_scope=frozenset({1}))
+    assert dashboard.user_freshness(states, 1, own_run, settings, NOW)["status"] == "refreshing"
 
 
 def test_local_days_follow_timezone(settings: Settings) -> None:
