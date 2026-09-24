@@ -54,7 +54,7 @@ packages = ["src/gitlab_team_pulse"]
 include = ["src/gitlab_team_pulse", "tests", "README.md", "LICENSE", "CHANGELOG.md"]
 
 [tool.pytest.ini_options]
-addopts = ["--strict-config", "--strict-markers"]
+addopts = ["--strict-config", "--strict-markers", "-m", "not e2e"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

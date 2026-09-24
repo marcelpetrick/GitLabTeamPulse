@@ -92,3 +92,10 @@ async def test_graphql(http: httpx.AsyncClient) -> None:
 def test_non_admin_hides_inactive_accounts() -> None:
     app = create_fake_gitlab(build_data(), admin=False)
     assert app.state.admin is False
+
+
+async def test_latency_control(http: httpx.AsyncClient, fake_app: FastAPI) -> None:
+    assert (await http.post("/-/fake/latency", params={"seconds": 99})).json() == {"latency": 10.0}
+    await http.post("/-/fake/latency", params={"seconds": 0.01})
+    assert (await http.get("/api/v4/version")).status_code == 200
+    assert (await http.get("/-/fake/state")).json()["latency"] == 0.01

@@ -7,6 +7,7 @@ It is never used when a real ``TEAMPULSE_GITLAB_URL`` is configured.
 
 from __future__ import annotations
 
+import asyncio
 import random
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -306,6 +307,7 @@ def create_fake_gitlab(
     app.state.admin = admin
     app.state.requests = 0
     app.state.graphql_error = None  # set to a message to simulate missing GraphQL capability
+    app.state.latency = 0.0  # seconds added to every API response (makes "Refreshing" visible)
 
     def base(request: Request) -> str:
         return str(request.base_url).rstrip("/")
@@ -334,6 +336,8 @@ def create_fake_gitlab(
         if request.url.path.startswith("/-/fake"):
             return await call_next(request)  # type: ignore[no-any-return]
         app.state.requests += 1
+        if app.state.latency:
+            await asyncio.sleep(app.state.latency)
         if app.state.down:
             return JSONResponse({"message": "503 Service Unavailable"}, status_code=503)
         if request.headers.get("PRIVATE-TOKEN") != token:
@@ -472,6 +476,7 @@ def create_fake_gitlab(
         return {
             "down": app.state.down,
             "admin": app.state.admin,
+            "latency": app.state.latency,
             "requests": app.state.requests,
             "users": len(app.state.data.users),
             "events": len(app.state.data.events),
@@ -481,6 +486,11 @@ def create_fake_gitlab(
     async def outage(down: bool = True) -> dict[str, bool]:
         app.state.down = down
         return {"down": down}
+
+    @app.post("/-/fake/latency")
+    async def latency(seconds: float = 0.0) -> dict[str, float]:
+        app.state.latency = max(0.0, min(seconds, 10.0))
+        return {"latency": app.state.latency}
 
     @app.post("/-/fake/activity")
     async def activity(user_id: int = 2) -> dict[str, Any]:
