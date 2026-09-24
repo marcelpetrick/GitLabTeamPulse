@@ -180,3 +180,10 @@ def test_demo_database_follows_configured_path(
     monkeypatch.setenv("TEAMPULSE_DATABASE_PATH", "/data/teampulse.db")
     settings = cli.demo_settings(cli.build_parser().parse_args(["demo"]))
     assert settings.database_path == Path("/data/demo.db")
+
+
+def test_cli_overrides_are_validated(env: Path, uvicorn_calls: list[dict[str, Any]]) -> None:
+    assert cli.main(["serve", "--port", "99999"]) == 2
+    assert uvicorn_calls == []
+    assert cli.main(["serve", "--host", "127.0.0.2", "--port", "8123"]) == 0
+    assert (uvicorn_calls[0]["host"], uvicorn_calls[0]["port"]) == ("127.0.0.2", 8123)

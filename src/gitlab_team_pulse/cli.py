@@ -10,6 +10,7 @@ import time
 from collections.abc import Sequence
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import uvicorn
 from pydantic import SecretStr, ValidationError
@@ -25,9 +26,10 @@ from gitlab_team_pulse.sync import ClientFactory, SyncService, default_client_fa
 OK, WARN, FAIL = "ok", "warn", "fail"
 
 
-def _load_settings(**overrides: object) -> Settings:
-    settings = Settings()
-    return settings.model_copy(update={k: v for k, v in overrides.items() if v is not None})
+def _load_settings(*, host: str | None = None, port: int | None = None) -> Settings:
+    """Environment settings with CLI overrides; overrides are validated like any other input."""
+    overrides: dict[str, Any] = {"host": host, "port": port}
+    return Settings(**{k: v for k, v in overrides.items() if v is not None})
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
