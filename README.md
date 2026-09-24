@@ -173,6 +173,9 @@ HTTP API: `GET /api/health`, `/api/status`, `/api/users`, `/api/dashboard`,
 `/api/users/{id}/work|activity|time-summary`, `/api/errors`, `PATCH /api/users/{id}/selection`,
 `POST /api/refresh` (202 or 429 with `Retry-After`). Interactive docs are at `/api/docs`.
 
+Why and how GitLab's GraphQL API is used (timelogs and epics) and what it saves compared
+with REST is explained in [`docs/GRAPHQL.md`](docs/GRAPHQL.md).
+
 ## Development
 
 ```bash
