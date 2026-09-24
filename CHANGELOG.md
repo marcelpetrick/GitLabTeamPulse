@@ -16,7 +16,17 @@ The full per-commit history is `git log --oneline` (each subject ends with its v
 - Redirects from GitLab are reported as a base-URL configuration error.
 - Copied settings never keep a stale timezone.
 - Inaccessible projects are not re-requested on every run (negative cache).
+
+### 0.2.9 – 0.2.10: documentation
 - [`docs/GRAPHQL.md`](docs/GRAPHQL.md): why and how GraphQL is used (timelogs, epics).
+
+### 0.2.11 – 0.2.14: second review round
+- GraphQL errors are classified: only schema, license and permission errors count as a missing
+  capability. Transient errors fail the dataset and keep last-known-good data, and epics that
+  worked before are never dropped silently.
+- Only the cards a running sync covers show "refreshing".
+- The first page load fetches only the routed view's data.
+- Changelog version ranges corrected.
 
 ## 0.1.x
 
