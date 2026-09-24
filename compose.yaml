@@ -1,0 +1,26 @@
+# Production-style deployment: persistent SQLite volume and the token as a Docker secret.
+#   mkdir -p secrets && printf '%s' 'glpat-...' > secrets/gitlab_token && chmod 600 secrets/gitlab_token
+#   TEAMPULSE_GITLAB_URL=https://gitlab.example.com docker compose up -d
+# Try it without GitLab:  docker compose run --rm -p 8000:8000 teampulse demo --host 0.0.0.0
+services:
+  teampulse:
+    image: ghcr.io/marcelpetrick/gitlabteampulse:latest
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"  # internal only; put a reverse proxy in front for wider access
+    environment:
+      TEAMPULSE_GITLAB_URL: ${TEAMPULSE_GITLAB_URL:?set the GitLab base URL}
+      TEAMPULSE_TIMEZONE: ${TEAMPULSE_TIMEZONE:-UTC}
+      TEAMPULSE_LOG_LEVEL: ${TEAMPULSE_LOG_LEVEL:-INFO}
+    secrets:
+      - gitlab_token
+    volumes:
+      - teampulse-data:/data
+
+secrets:
+  gitlab_token:
+    file: ./secrets/gitlab_token
+
+volumes:
+  teampulse-data:

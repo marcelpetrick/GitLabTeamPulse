@@ -1,0 +1,106 @@
+name: Docker Image
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/gitlabteampulse
+
+jobs:
+  image:
+    name: Build, smoke test and publish to GHCR
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Read package version
+        id: version
+        run: echo "version=$(sed -nE 's/^__version__ = "(.*)"/\1/p' src/gitlab_team_pulse/__init__.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4.4.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4.4.1
+
+      - name: Build image for the smoke test
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          load: true
+          tags: gitlab-team-pulse:smoke
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test (serve + fake GitLab + Docker secret + persistent volume)
+        run: |
+          set -euo pipefail
+          docker network create smoke
+          docker run -d --name fakegl --network smoke gitlab-team-pulse:smoke fake-gitlab --host 0.0.0.0 --port 8081
+          printf 'fake-token' > token && chmod 644 token
+          docker run -d --name app --network smoke -p 8000:8000 \
+            -e TEAMPULSE_GITLAB_URL=http://fakegl:8081 \
+            -v "$PWD/token:/run/secrets/gitlab_token:ro" -v smoke-data:/data gitlab-team-pulse:smoke
+          for i in $(seq 60); do curl -fsS localhost:8000/api/health && break; sleep 1; done
+          curl -fsS localhost:8000/api/health | grep -q '"migrated":true'
+          test "$(docker exec app id -u)" = "10001"
+          for i in $(seq 30); do
+            curl -fsS localhost:8000/api/status | grep -q '"known":32' && break; sleep 1
+          done
+          curl -fsS localhost:8000/api/status | grep -q '"known":32'
+          curl -fsS -X PATCH localhost:8000/api/users/2/selection -H 'content-type: application/json' -d '{"selected":true}'
+          docker restart app
+          for i in $(seq 60); do curl -fsS localhost:8000/api/health && break; sleep 1; done
+          curl -fsS localhost:8000/api/status | grep -q '"selected":1'
+          ! docker logs app 2>&1 | grep -q fake-token
+          docker logs app | tail -n 20
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.version.outputs.version }},enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+
+      - name: Build and push (linux/amd64, linux/arm64)
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v7.4.0
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
