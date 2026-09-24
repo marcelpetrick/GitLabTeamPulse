@@ -262,3 +262,20 @@ def test_selection_is_global_and_survives_restart(
         users = client.get("/api/users").json()["users"]
         assert [u["id"] for u in users if u["selected"]] == [ALEX]
         assert client.get("/api/status").json()["directory"]["status"] in {"fresh", "stale"}
+
+
+def test_users_version_only_moves_with_directory_and_selection(
+    api: tuple[TestClient, AppContext],
+) -> None:
+    client, context = api
+    client.portal.call(context.service.sync_directory, "startup")  # type: ignore[union-attr]
+    status = client.get("/api/status").json()
+    users_version = status["users_version"]
+    assert client.get("/api/users").json()["users_version"] == users_version
+    client.patch(f"/api/users/{ALEX}/selection", json={"selected": True})
+    after_select = client.get("/api/status").json()
+    assert after_select["users_version"] == users_version + 1
+    client.portal.call(context.service.sync_selected, "manual")  # type: ignore[union-attr]
+    after_sync = client.get("/api/status").json()
+    assert after_sync["users_version"] == users_version + 1  # activity sync leaves it alone
+    assert after_sync["data_version"] > after_select["data_version"]

@@ -183,6 +183,7 @@ class SyncService:
                 if run is not None:
                     store.finish_run(run, status="ok", now=now, summary=summary)
                 store.bump_data_version(session)
+                store.bump_users_version(session)
                 session.commit()
             log.info("directory refreshed: %s in %.1fs", summary, time.monotonic() - started)
             return "ok"
@@ -207,6 +208,7 @@ class SyncService:
             if run is not None:
                 store.finish_run(run, status="error", now=now, summary=str(exc))
             store.bump_data_version(session)
+            store.bump_users_version(session)
             session.commit()
 
     def directory_healthy(self) -> bool:

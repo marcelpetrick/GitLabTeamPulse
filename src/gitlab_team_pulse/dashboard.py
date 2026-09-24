@@ -391,6 +391,7 @@ def build_status(
         "version": __version__,
         "now": now,
         "data_version": store.data_version(session),
+        "users_version": store.users_version(session),
         "timezone": settings.timezone,
         "ui_poll_interval_seconds": settings.ui_poll_interval_seconds,
         "crawler": {

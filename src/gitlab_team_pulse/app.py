@@ -164,6 +164,7 @@ def api_router() -> APIRouter:
             )
             return {
                 "data_version": store.data_version(session),
+                "users_version": store.users_version(session),
                 "directory": directory.as_dict(),
                 "users": [
                     dashboard.user_payload(u, context.settings) for u in store.list_users(session)
@@ -181,6 +182,7 @@ def api_router() -> APIRouter:
             if user is None:
                 raise HTTPException(status_code=404, detail="unknown user")
             store.bump_data_version(session)
+            store.bump_users_version(session)
             session.commit()
             payload = dashboard.user_payload(user, context.settings)
         if update.selected:

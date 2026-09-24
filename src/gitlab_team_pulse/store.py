@@ -33,6 +33,7 @@ from gitlab_team_pulse.models import (
 )
 
 DATA_VERSION = "data_version"
+USERS_VERSION = "users_version"
 MAX_MESSAGE = 2000
 
 
@@ -57,6 +58,18 @@ def bump_data_version(session: Session) -> int:
     """Increment the change counter the browser polls to detect new cached data."""
     version = data_version(session) + 1
     set_value(session, DATA_VERSION, str(version))
+    return version
+
+
+def users_version(session: Session) -> int:
+    return int(get_value(session, USERS_VERSION) or 0)
+
+
+def bump_users_version(session: Session) -> int:
+    """Separate counter for the directory/selection, so People tabs do not refetch the
+    whole directory every time a selected user's activity changes."""
+    version = users_version(session) + 1
+    set_value(session, USERS_VERSION, str(version))
     return version
 
 

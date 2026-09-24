@@ -187,6 +187,7 @@ async def _seed_demo(settings: Settings, select: int) -> None:
                 for user in sorted(humans, key=lambda u: u.id)[1 : select + 1]:
                     store.set_selected(session, user.id, True, service.clock())
                 store.bump_data_version(session)
+                store.bump_users_version(session)
                 session.commit()
     finally:
         await service.aclose()

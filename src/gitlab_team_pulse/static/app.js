@@ -18,6 +18,7 @@ class App {
     this.dashboard = null;
     this.loadedVersion = { users: -1, dashboard: -1 };
     this.dataVersion = null;
+    this.usersVersion = null;
     this.offline = false;
     this.view = null;
     this.pollTimer = null;
@@ -93,8 +94,8 @@ class App {
 
   async loadViewData(force = false) {
     const key = this.view === "people" ? "users" : "dashboard";
-    if (!force && this.loadedVersion[key] === this.dataVersion && this[key]) return;
-    const version = this.dataVersion;
+    const version = key === "users" ? this.usersVersion : this.dataVersion;
+    if (!force && this.loadedVersion[key] === version && this[key]) return;
     try {
       this[key] = key === "users" ? await api.users() : await api.dashboard();
       this.loadedVersion[key] = version;
@@ -115,16 +116,19 @@ class App {
       next = (status.ui_poll_interval_seconds || 20) * 1000;
       const busy = status.crawler.state === "refreshing" || status.crawler.refresh_pending || this.dashboardView.refreshing;
       if (busy) next = FAST_POLL_MS;
-      const changed = this.dataVersion !== status.data_version;
+      // Each view reloads only when its own version moves: the directory changes hourly, the
+      // dashboard data on every sync step.
+      const changed = this.view === "people"
+        ? this.usersVersion !== status.users_version
+        : this.dataVersion !== status.data_version;
+      const anyChange = changed || this.dataVersion !== status.data_version;
       this.dataVersion = status.data_version;
+      this.usersVersion = status.users_version;
       this.renderChrome();
       this.dashboardView.onStatus(status);
-      if (changed || wasOffline) {
-        await this.loadViewData();
-        if (this.diagnostics.isOpen) this.diagnostics.load();
-      } else if (this.view === "dashboard") {
-        this.dashboardView.updateRefreshButton();
-      }
+      if (changed || wasOffline) await this.loadViewData();
+      if (anyChange && this.diagnostics.isOpen) this.diagnostics.load();
+      if (!changed && this.view === "dashboard") this.dashboardView.updateRefreshButton();
     } catch {
       this.offline = true;
       next = 5000;
