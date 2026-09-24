@@ -1,0 +1,92 @@
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gitlab-team-pulse"
+description = "People-centric activity dashboard for a self-managed GitLab instance."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Marcel Petrick", email = "mail@marcelpetrick.it" }]
+dynamic = ["version"]
+classifiers = [
+    "Framework :: FastAPI",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "alembic==1.20.0",
+    "fastapi==0.141.1",
+    "gunicorn==26.2.0",
+    "httpx==0.28.1",
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
+    "sqlalchemy==2.0.54",
+    "uvicorn==0.53.0",
+]
+
+[project.scripts]
+gitlab-team-pulse = "gitlab_team_pulse.cli:main"
+
+[dependency-groups]
+dev = [
+    "build==1.6.1",
+    "mypy==2.3.1",
+    "playwright==1.63.0",
+    "pre-commit==4.6.2",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "respx==0.23.1",
+    "ruff==0.16.8",
+]
+
+[tool.hatch.version]
+path = "src/gitlab_team_pulse/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gitlab_team_pulse"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/gitlab_team_pulse", "tests", "README.md", "LICENSE", "CHANGELOG.md"]
+
+[tool.pytest.ini_options]
+addopts = ["--strict-config", "--strict-markers"]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = ["e2e: browser end-to-end tests (Playwright, real HTTP servers)"]
+filterwarnings = ["error::DeprecationWarning:gitlab_team_pulse.*"]
+
+[tool.coverage.run]
+branch = true
+source = ["gitlab_team_pulse"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 95
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "if __name__ == .__main__.:"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF", "PT", "S", "ASYNC"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S108", "S311"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+plugins = ["pydantic.mypy"]
