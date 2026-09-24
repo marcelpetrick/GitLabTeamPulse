@@ -99,6 +99,9 @@ class SyncService:
         self.clock = clock
         self.runtime = RuntimeState()
         self._client: GitLabClient | None = None
+        # Negative cache: projects whose metadata lookup failed (deleted, no access) are not
+        # requested again on every run, only after the retention period.
+        self._project_failures: dict[int, datetime] = {}
 
     # ------------------------------------------------------------------ plumbing
 
@@ -535,6 +538,12 @@ class SyncService:
             missing = store.projects_needing_refresh(
                 session, project_ids, now - timedelta(hours=self.settings.retention_hours)
             )
+        retry_after = timedelta(hours=self.settings.retention_hours)
+        missing = {
+            pid
+            for pid in missing
+            if pid not in self._project_failures or now - self._project_failures[pid] >= retry_after
+        }
         if not missing:
             return
         results = await asyncio.gather(
@@ -544,7 +553,9 @@ class SyncService:
             for pid, result in zip(sorted(missing), results, strict=True):
                 if isinstance(result, BaseException):
                     log.warning("project=%d metadata unavailable: %s", pid, result)
+                    self._project_failures[pid] = now
                     continue
+                self._project_failures.pop(pid, None)
                 store.upsert_project(session, result, now)
             store.bump_data_version(session)
             session.commit()

@@ -338,3 +338,18 @@ async def test_missing_epic_capability_is_a_diagnostic_not_a_failure(
     assert service.runtime.epics == "available"
     with session_factory() as session:
         assert store.unresolved_error_count(session) == 0
+
+
+async def test_failed_project_lookups_are_not_repeated_every_run(
+    service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI, clock: Clock
+) -> None:
+    fake_app.state.data.projects.pop(1)  # still referenced by work, events and timelogs
+    await select_users(service, session_factory, ALEX)
+    await service.sync_selected("scheduled")
+    first_failure = service._project_failures[1]
+    clock.advance(minutes=10)
+    await service.sync_selected("scheduled")
+    assert service._project_failures[1] == first_failure  # not requested again
+    clock.advance(hours=25)
+    await service.sync_selected("scheduled")
+    assert service._project_failures[1] == clock.now  # retried after the retention period
