@@ -8,7 +8,6 @@ environment. It is held as a ``SecretStr`` so it never leaks through ``repr`` or
 from __future__ import annotations
 
 import os
-from functools import cached_property
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -89,7 +88,7 @@ class Settings(BaseSettings):
             raise ValueError(f"unknown timezone: {value}") from exc
         return value
 
-    @cached_property
+    @property
     def tz(self) -> ZoneInfo:
         return ZoneInfo(self.timezone)
 

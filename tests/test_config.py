@@ -98,3 +98,9 @@ def test_ca_bundle_overrides_verify_flag(tmp_path: Path) -> None:
     bundle = tmp_path / "ca.pem"
     assert make(gitlab_ca_bundle=bundle).tls_verify == str(bundle)
     assert make(gitlab_verify_tls=False).tls_verify is False
+
+
+def test_timezone_follows_copies() -> None:
+    utc = make()
+    assert utc.tz.key == "UTC"  # evaluate before copying
+    assert utc.model_copy(update={"timezone": "Europe/Berlin"}).tz.key == "Europe/Berlin"
