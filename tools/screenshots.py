@@ -31,8 +31,16 @@ def main() -> None:
     base = f"http://127.0.0.1:{app_port}"
     with tempfile.TemporaryDirectory() as tmp:
         cmd = [
-            sys.executable, "-m", "gitlab_team_pulse", "demo", "--port", str(app_port),
-            "--gitlab-port", str(gitlab_port), "--database", f"{tmp}/demo.db",
+            sys.executable,
+            "-m",
+            "gitlab_team_pulse",
+            "demo",
+            "--port",
+            str(app_port),
+            "--gitlab-port",
+            str(gitlab_port),
+            "--database",
+            f"{tmp}/demo.db",
         ]
         server = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)  # noqa: S603
         try:
@@ -46,17 +54,21 @@ def main() -> None:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch()
                 for theme in ("light", "dark"):
-                    page = browser.new_page(viewport={"width": 1440, "height": 1000}, color_scheme=theme)
+                    page = browser.new_page(
+                        viewport={"width": 1440, "height": 1000}, color_scheme=theme
+                    )
                     page.goto(f"{base}/#/dashboard")
                     page.wait_for_selector(".card .work-table")
                     page.wait_for_timeout(500)
                     page.screenshot(path=OUT / f"dashboard-{theme}.png")
-                page = browser.new_page(viewport={"width": 1440, "height": 900}, color_scheme="light")
+                page = browser.new_page(
+                    viewport={"width": 1440, "height": 900}, color_scheme="light"
+                )
                 page.goto(f"{base}/#/people")
                 page.wait_for_selector(".people-row[data-user-id]")
                 page.fill("#people-filter", "a")
                 page.screenshot(path=OUT / "people.png")
-                urllib.request.urlopen(  # noqa: S310
+                urllib.request.urlopen(
                     urllib.request.Request(
                         f"http://127.0.0.1:{gitlab_port}/-/fake/outage?down=true", method="POST"
                     )
