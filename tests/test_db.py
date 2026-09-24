@@ -82,3 +82,26 @@ def test_naive_datetime_is_rejected(session_factory: sessionmaker[Session]) -> N
         session.add(User(id=2, username="b", first_seen_at=naive, last_seen_at=naive))
         with pytest.raises(StatementError):
             session.commit()
+
+
+def test_upgrade_from_first_schema_keeps_data(tmp_path: Path) -> None:
+    eng = make_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    migrate(eng, "0001")
+    with eng.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO users (id, username, name, state, account_type, selected, "
+                "first_seen_at, last_seen_at) VALUES (7, 'kim', 'Kim', 'active', 'human', 1, "
+                "'2026-09-01 00:00:00', '2026-09-01 00:00:00')"
+            )
+        )
+    migrate(eng)
+    assert is_migrated(eng)
+    assert {"work_items", "activity_events", "timelogs", "projects"} <= set(
+        inspect(eng).get_table_names()
+    )
+    with sessionmaker(bind=eng)() as session:
+        user = session.get(User, 7)
+        assert user is not None
+        assert user.selected is True
+    eng.dispose()
