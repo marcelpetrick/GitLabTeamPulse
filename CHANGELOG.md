@@ -16,6 +16,7 @@ The full per-commit history is `git log --oneline` (each subject ends with its v
 - Redirects from GitLab are reported as a base-URL configuration error.
 - Copied settings never keep a stale timezone.
 - Inaccessible projects are not re-requested on every run (negative cache).
+- [`docs/GRAPHQL.md`](docs/GRAPHQL.md): why and how GraphQL is used (timelogs, epics).
 
 ## 0.1.x
 

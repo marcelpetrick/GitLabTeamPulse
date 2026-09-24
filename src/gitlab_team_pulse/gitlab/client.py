@@ -1,7 +1,8 @@
 """Async GitLab REST/GraphQL client with pagination, bounded retries and bounded concurrency.
 
 The token is sent only in the ``PRIVATE-TOKEN`` header and only to the configured base URL;
-pagination links pointing anywhere else are refused.
+pagination links pointing anywhere else are refused. GraphQL is used only for timelogs and
+epics, where REST has no efficient equivalent; see ``docs/GRAPHQL.md``.
 """
 
 from __future__ import annotations

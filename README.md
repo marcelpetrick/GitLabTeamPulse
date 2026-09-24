@@ -41,12 +41,14 @@ diagnostics drawer:
 - **Global, persistent selection**: stored in SQLite and shared by all viewers. A newly
   selected user is synchronized right away.
 - **Per-person card**:
-  - Work: assigned issues, merge requests and MRs to review in *every* state, sorted newest
+  - Work: assigned issues, merge requests, MRs to review and epics (where the instance
+    supports them, see [GraphQL](docs/GRAPHQL.md#2-epics-work-items)) in *every* state, sorted newest
     first. You can re-sort locally by update time, title, project, state, due date or type.
   - Activity: the five latest actions at a glance, with all twelve one click away.
   - Charts: a stacked seven-day activity chart (pushes, comments, issues, merge requests,
     other) and daily logged time with per-project totals.
-- **Facts only**: time comes from GitLab timelogs, never estimated. Nothing is scored, and
+- **Facts only**: time comes from GitLab timelogs (one
+  [GraphQL query](docs/GRAPHQL.md#1-timelogs-actual-logged-time) per user), never estimated. Nothing is scored, and
   there is no hard-coded 40-hour judgment. A week with no logged time is simply highlighted.
 - **Cached first**: the browser reads only the local SQLite cache and polls a compact
   `/api/status` for a `data_version` change. GitLab is crawled in the background: selected
@@ -83,7 +85,8 @@ docker run --rm -p 8000:8000 ghcr.io/marcelpetrick/gitlabteampulse:latest demo -
 1. Create a token with the **`read_api`** scope. An **administrator** token is recommended:
    without admin rights, GitLab hides blocked, deactivated and internal accounts, and the
    dashboard says so in its diagnostics instead of silently claiming completeness. The
-   top-level GraphQL `timelogs` query may also require admin rights on some versions.
+   top-level GraphQL `timelogs` query may also require admin rights on some versions
+   (see [`docs/GRAPHQL.md`](docs/GRAPHQL.md#permissions)). No write scope is ever needed.
 2. Configure and start:
 
 ```bash
@@ -155,14 +158,14 @@ FastAPI app (single worker) ── security headers (CSP, no CORS), cached reads
    ├── Scheduler (asyncio): directory hourly · selected users every 10 min · cleanup hourly
    │        └── manual refresh coalescing and throttling, immediate sync for newly selected users
    ├── SyncService: per-user, per-dataset transactions; last-known-good; diagnostics
-   │        └── GitLabClient (httpx): REST + GraphQL timelogs, pagination, retries, bounded concurrency
+   │        └── GitLabClient (httpx): REST + GraphQL (timelogs, epics), pagination, retries, bounded concurrency
    └── SQLite (SQLAlchemy + Alembic, WAL, foreign keys) ── users, work items, events, timelogs,
             projects, sync state, runs, errors
 ```
 
 | Module | Responsibility |
 | --- | --- |
-| `gitlab/` | The only code that speaks HTTP to GitLab or reads raw payloads; typed errors |
+| `gitlab/` | The only code that speaks HTTP to GitLab (REST and [GraphQL](docs/GRAPHQL.md)) or reads raw payloads; typed errors |
 | `sync.py`, `scheduler.py` | Synchronization, freshness bookkeeping, scheduling |
 | `store.py`, `models.py`, `migrations/` | Persistence and schema history |
 | `retention.py` | Rolling cleanup that never removes the only good snapshot |
@@ -206,6 +209,9 @@ features bump the minor version (`tools/bump_version.py`). Commits follow
 [Conventional Commits](https://www.conventionalcommits.org/) and are atomic, with the version
 appended, e.g. `feat(docker): … (v0.1.0)`. See [`CHANGELOG.md`](CHANGELOG.md).
 
-## Product vision
+## Documentation
 
-The full requirements and acceptance criteria are in [`VISION.md`](VISION.md).
+- [`VISION.md`](VISION.md): full product requirements and acceptance criteria.
+- [`docs/GRAPHQL.md`](docs/GRAPHQL.md): what GraphQL is, why it is used for timelogs and
+  epics, and how many requests it saves compared with REST.
+- [`CHANGELOG.md`](CHANGELOG.md): release history.
