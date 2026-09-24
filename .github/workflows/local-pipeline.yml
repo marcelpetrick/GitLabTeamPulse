@@ -1,0 +1,60 @@
+name: Local Pipeline
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  local-pipeline:
+    name: Local pipeline replica
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          version: "0.12.18"
+          python-version: "3.14"
+          enable-cache: true
+
+      - name: Run the local pipeline (tests, E2E, package, wheel smoke)
+        run: ./localPipeline.sh --noRun --noDocker --report-dir pipeline-reports
+
+      - name: Publish summary
+        if: always()
+        run: |
+          if [[ -f pipeline-reports/summary.txt ]]; then
+            { echo '```'; cat pipeline-reports/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: pipeline-reports
+          path: |
+            pipeline-reports
+            htmlcov
+          if-no-files-found: ignore
+
+      - name: Upload packages
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: python-packages
+          path: dist/*
+          if-no-files-found: ignore

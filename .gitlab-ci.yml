@@ -1,0 +1,40 @@
+# Primary pipeline on GitLab: the same ./localPipeline.sh that runs locally and on GitHub.
+stages:
+  - verify
+  - image
+
+variables:
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
+  PLAYWRIGHT_BROWSERS_PATH: "$CI_PROJECT_DIR/.playwright"
+
+verify:
+  stage: verify
+  image: python:3.14-slim
+  cache:
+    key: uv-$CI_COMMIT_REF_SLUG
+    paths: [.uv-cache, .playwright]
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq curl git >/dev/null
+    - pip install --quiet uv==0.12.18
+  script:
+    - ./localPipeline.sh --noRun --noDocker --report-dir pipeline-reports
+  artifacts:
+    when: always
+    paths: [pipeline-reports/, htmlcov/, dist/]
+    reports:
+      junit: pipeline-reports/junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: pipeline-reports/coverage.xml
+  coverage: '/Total coverage: \d+\.\d+%/'
+
+docker-image:
+  stage: image
+  image: docker:29
+  services: [docker:29-dind]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH || $CI_COMMIT_TAG
+  script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
