@@ -3,6 +3,20 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.2.x
+
+### 0.2.0 (2026-09-24): epics
+- Assigned epics via GraphQL work items for the top-level groups the user's work lives in; when
+  the instance lacks the capability, a warning diagnostic appears instead of silent omission.
+
+### 0.2.1 – 0.2.8: review fixes
+- Separate `users_version`, so People tabs refetch the directory only when it changes.
+- Crashed background jobs are logged and persisted as diagnostics.
+- The demo database follows `TEAMPULSE_DATABASE_PATH` (persists on the container's `/data`).
+- Redirects from GitLab are reported as a base-URL configuration error.
+- Copied settings never keep a stale timezone.
+- Inaccessible projects are not re-requested on every run (negative cache).
+
 ## 0.1.x
 
 ### 0.1.0 (2026-09-24): Dockerized prototype
