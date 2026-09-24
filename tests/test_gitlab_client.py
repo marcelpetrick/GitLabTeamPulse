@@ -312,7 +312,9 @@ async def test_timelogs_paginate_and_filter_foreign_users(client: GitLabClient) 
     ("body", "error"),
     [
         ({"errors": [{"message": "Field 'timelogs' doesn't exist"}]}, GitLabCapabilityError),
-        ({"errors": ["plain"]}, GitLabCapabilityError),
+        ({"errors": ["plain"]}, GitLabUnavailableError),
+        ({"errors": [{"message": "Request timed out"}]}, GitLabUnavailableError),
+        ({"errors": [{"message": "Timelogs require admin access"}]}, GitLabCapabilityError),
         ({"data": None}, GitLabResponseError),
         ({"data": {"timelogs": None}}, GitLabResponseError),
         ([1, 2], GitLabResponseError),
@@ -396,3 +398,20 @@ async def test_redirect_is_a_configuration_error(client: GitLabClient, sleeps: S
         await client.current_user()
     assert info.value.status == 301
     assert sleeps.calls == []
+
+
+@pytest.mark.parametrize(
+    ("message", "capability"),
+    [
+        ("Field 'workItems' doesn't exist on type 'Group'", True),
+        ("Argument 'types' on Field 'workItems' has an invalid value (EPIC)", True),
+        ("You don't have permission to perform this action", True),
+        ("This feature requires a Premium license", True),
+        ("Internal server error", False),
+        ("Request timed out", False),
+    ],
+)
+def test_capability_classification(message: str, capability: bool) -> None:
+    from gitlab_team_pulse.gitlab.client import is_capability_message
+
+    assert is_capability_message(message) is capability

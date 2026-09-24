@@ -171,7 +171,7 @@ async def test_partial_failure_is_per_category(
 ) -> None:
     await select_users(service, session_factory, ALEX)
 
-    fake_app.state.graphql_error = "timelogs require admin"
+    fake_app.state.graphql_error = "timelogs require admin access"
     assert await service.sync_selected("scheduled") == "partial"
     with session_factory() as session:
         assert store.get_state(session, "work", ALEX).status == "ok"
@@ -372,3 +372,36 @@ async def test_failed_project_lookups_are_not_repeated_every_run(
     await service.sync_selected("scheduled")
     assert 1 in lookups  # retried after the retention period
     assert service._project_failures[1] == clock.now
+
+
+async def test_transient_graphql_error_keeps_last_known_good_epics(
+    service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI, clock: Clock
+) -> None:
+    await select_users(service, session_factory, ALEX)
+    await service.sync_selected("scheduled")
+
+    def epic_count() -> int:
+        with session_factory() as session:
+            return count(session, WorkItemRecord, kind="epic")
+
+    assert epic_count() == 1
+    fake_app.state.graphql_error = "Internal server error"  # transient, not a capability gap
+    clock.advance(minutes=10)
+    assert await service.sync_selected("scheduled") == "partial"
+    assert epic_count() == 1
+    assert service.runtime.epics == "available"
+    with session_factory() as session:
+        assert store.get_state(session, "work", ALEX).status == "error"
+
+
+async def test_epics_that_worked_before_are_not_dropped_on_capability_errors(
+    service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI, clock: Clock
+) -> None:
+    await select_users(service, session_factory, ALEX)
+    await service.sync_selected("scheduled")
+    fake_app.state.epics_supported = False
+    clock.advance(minutes=10)
+    await service.sync_selected("scheduled")
+    with session_factory() as session:
+        assert count(session, WorkItemRecord, kind="epic") == 1
+        assert store.get_state(session, "work", ALEX).status == "error"

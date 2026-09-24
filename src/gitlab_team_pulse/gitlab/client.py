@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 import time
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime
@@ -89,6 +90,20 @@ query($fullPath: ID!, $username: String!, $updatedAfter: Time, $after: String) {
   }
 }
 """
+
+
+CAPABILITY_PATTERN = re.compile(
+    r"doesn't exist|does not exist|unknown argument|has an invalid value|unknown type|"
+    r"is not defined|not supported|not available|license|permission|not authorized|"
+    r"do not have access|requires? (?:an )?admin",
+    re.IGNORECASE,
+)
+
+
+def is_capability_message(message: str) -> bool:
+    """True when a GraphQL error means "this installation/token cannot do that" (schema,
+    license or permission), as opposed to a transient server-side failure."""
+    return bool(CAPABILITY_PATTERN.search(message))
 
 
 class GitLabClient:
@@ -267,7 +282,11 @@ class GitLabClient:
         errors = body.get("errors")
         if errors:
             first = errors[0].get("message") if isinstance(errors[0], dict) else errors[0]
-            raise GitLabCapabilityError(f"graphql: {first}")
+            if is_capability_message(str(first)):
+                raise GitLabCapabilityError(f"graphql: {first}")
+            # Anything else (e.g. a server-side timeout reported inside HTTP 200) is transient:
+            # the dataset fails and keeps its last known good data.
+            raise GitLabUnavailableError(f"graphql: {first}")
         data = body.get("data")
         if not isinstance(data, dict):
             raise GitLabResponseError("graphql: response has no data")

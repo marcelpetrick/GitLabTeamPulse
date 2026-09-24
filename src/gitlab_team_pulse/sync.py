@@ -445,6 +445,10 @@ class SyncService:
         try:
             epics = await client.get_user_epics(username, groups, cutoff)
         except GitLabCapabilityError as exc:
+            if self.runtime.epics == "available":
+                # Epics worked before: treat this as a failure of the work dataset so the last
+                # known good snapshot (including epics) is kept instead of silently dropped.
+                raise
             self.runtime.epics = "unavailable"
             self.runtime.epics_checked_at = now
             with self.session_factory() as session:
