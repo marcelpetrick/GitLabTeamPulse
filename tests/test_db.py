@@ -105,3 +105,20 @@ def test_upgrade_from_first_schema_keeps_data(tmp_path: Path) -> None:
         assert user is not None
         assert user.selected is True
     eng.dispose()
+
+
+def test_head_revision_is_parsed_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gitlab_team_pulse import db
+
+    db.head_revision.cache_clear()
+    calls: list[str] = []
+    real = db.ScriptDirectory
+
+    def counting(path: str) -> object:
+        calls.append(path)
+        return real(path)
+
+    monkeypatch.setattr(db, "ScriptDirectory", counting)
+    assert db.head_revision() == db.head_revision()
+    assert len(calls) == 1
+    db.head_revision.cache_clear()

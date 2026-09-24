@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +55,10 @@ def downgrade(engine: Engine, revision: str) -> None:
     command.downgrade(alembic_config(engine), revision)
 
 
+@cache
 def head_revision() -> str | None:
+    """The newest shipped revision; migration scripts never change at runtime, so parse once
+    instead of on every /api/health call."""
     script = ScriptDirectory(str(MIGRATIONS_DIR))
     return script.get_current_head()
 
