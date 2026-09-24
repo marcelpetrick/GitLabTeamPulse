@@ -341,15 +341,34 @@ async def test_missing_epic_capability_is_a_diagnostic_not_a_failure(
 
 
 async def test_failed_project_lookups_are_not_repeated_every_run(
-    service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI, clock: Clock
+    service: SyncService,
+    session_factory: sessionmaker[Session],
+    clock: Clock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_app.state.data.projects.pop(1)  # still referenced by work, events and timelogs
+    from gitlab_team_pulse.gitlab.errors import GitLabForbiddenError
+
+    client = service.client()
+    real_get_project = client.get_project
+    lookups: list[int] = []
+
+    async def get_project(project_id: int):  # type: ignore[no-untyped-def]
+        lookups.append(project_id)
+        if project_id == 1:
+            raise GitLabForbiddenError("forbidden (403)", status=403)
+        return await real_get_project(project_id)
+
+    monkeypatch.setattr(client, "get_project", get_project)
     await select_users(service, session_factory, ALEX)
     await service.sync_selected("scheduled")
+    assert 1 in lookups
     first_failure = service._project_failures[1]
+    lookups.clear()
     clock.advance(minutes=10)
     await service.sync_selected("scheduled")
-    assert service._project_failures[1] == first_failure  # not requested again
+    assert 1 not in lookups  # not requested again within the retention period
+    assert service._project_failures[1] == first_failure
     clock.advance(hours=25)
     await service.sync_selected("scheduled")
-    assert service._project_failures[1] == clock.now  # retried after the retention period
+    assert 1 in lookups  # retried after the retention period
+    assert service._project_failures[1] == clock.now
