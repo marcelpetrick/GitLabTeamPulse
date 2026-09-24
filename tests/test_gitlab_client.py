@@ -323,3 +323,21 @@ async def test_graphql_failures(client: GitLabClient, body: object, error: type[
     now = datetime(2026, 9, 21, tzinfo=UTC)
     with pytest.raises(error):
         await client.get_user_timelogs("alex", now, now)
+
+
+@respx.mock
+async def test_recent_activity_limit_without_date(client: GitLabClient) -> None:
+    route = respx.get(f"{API}/users/5/events").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"id": i, "action_name": "opened", "created_at": "2026-09-01T10:00:00Z"}
+                for i in range(12)
+            ],
+        )
+    )
+    events = await client.get_user_recent_activity(5, limit=12)
+    assert len(events) == 12
+    params = route.calls.last.request.url.params
+    assert "after" not in params
+    assert params["per_page"] == "12"

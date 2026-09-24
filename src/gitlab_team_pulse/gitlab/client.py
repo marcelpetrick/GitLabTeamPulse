@@ -289,11 +289,16 @@ class GitLabClient:
         )
         return [*issues, *assigned_mrs, *review_mrs]
 
-    async def get_user_recent_activity(self, user_id: int, after: date) -> list[ActivityEvent]:
+    async def get_user_recent_activity(
+        self, user_id: int, after: date | None = None, *, limit: int | None = None
+    ) -> list[ActivityEvent]:
         """Events strictly after ``after`` (GitLab date granularity), newest first."""
-        pages = await self.paginate(
-            f"users/{user_id}/events", {"after": after.isoformat(), "sort": "desc"}
-        )
+        params: dict[str, Any] = {"sort": "desc"}
+        if after is not None:
+            params["after"] = after.isoformat()
+        if limit is not None:
+            params["per_page"] = min(limit, PER_PAGE)
+        pages = await self.paginate(f"users/{user_id}/events", params, limit=limit)
         return [guarded("event", parse_event, item) for item in pages]
 
     async def get_user_timelogs(

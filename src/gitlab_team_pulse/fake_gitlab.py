@@ -305,6 +305,7 @@ def create_fake_gitlab(
     app.state.down = False
     app.state.admin = admin
     app.state.requests = 0
+    app.state.graphql_error = None  # set to a message to simulate missing GraphQL capability
 
     def base(request: Request) -> str:
         return str(request.base_url).rstrip("/")
@@ -406,6 +407,8 @@ def create_fake_gitlab(
     @app.post("/api/graphql")
     async def graphql(request: Request) -> JSONResponse:
         body = await request.json()
+        if app.state.graphql_error:
+            return JSONResponse({"errors": [{"message": app.state.graphql_error}]})
         if "timelogs" not in body.get("query", ""):
             return JSONResponse({"errors": [{"message": "unsupported query"}]})
         variables = body.get("variables") or {}

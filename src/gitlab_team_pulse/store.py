@@ -9,11 +9,28 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, exists, func, select, update
 from sqlalchemy.orm import Session
 
-from gitlab_team_pulse.gitlab.models import GitLabUser
-from gitlab_team_pulse.models import AppState, ErrorRecord, SyncRun, SyncState, User
+from gitlab_team_pulse.gitlab.models import (
+    ActivityEvent,
+    GitLabProject,
+    GitLabUser,
+    Timelog,
+    WorkItem,
+)
+from gitlab_team_pulse.models import (
+    ActivityEventRecord,
+    AppState,
+    ErrorRecord,
+    Project,
+    SyncRun,
+    SyncState,
+    TimelogRecord,
+    User,
+    WorkItemAssignee,
+    WorkItemRecord,
+)
 
 DATA_VERSION = "data_version"
 MAX_MESSAGE = 2000
@@ -259,3 +276,153 @@ def set_selected(session: Session, user_id: int, selected: bool, now: datetime) 
         user.selected = selected
         user.selected_at = now if selected else None
     return user
+
+
+# ---------------------------------------------------------------------- work items
+
+
+def replace_user_work(session: Session, user_id: int, items: list[WorkItem], now: datetime) -> None:
+    """Make ``items`` the complete current work snapshot for one user (all states)."""
+    by_key: dict[tuple[str, int], WorkItem] = {(i.kind, i.gitlab_id): i for i in items}
+    existing: dict[tuple[str, int], WorkItemRecord] = {}
+    ids = {gitlab_id for _, gitlab_id in by_key}
+    if ids:
+        for found in session.scalars(
+            select(WorkItemRecord).where(WorkItemRecord.gitlab_id.in_(ids))
+        ):
+            existing[(found.kind, found.gitlab_id)] = found
+    for key, item in by_key.items():
+        record = existing.get(key)
+        if record is None:
+            record = WorkItemRecord(kind=item.kind, gitlab_id=item.gitlab_id)
+            session.add(record)
+            existing[key] = record
+        record.iid = item.iid
+        record.project_id = item.project_id
+        record.reference = item.reference
+        record.title = item.title
+        record.state = item.state
+        record.issue_type = item.issue_type
+        record.labels = list(item.labels)
+        record.milestone = item.milestone
+        record.priority = item.priority
+        record.due_date = item.due_date
+        record.created_at = item.created_at
+        record.updated_at = item.updated_at
+        record.closed_at = item.closed_at
+        record.web_url = item.web_url
+        record.author = item.author
+        record.assignees = list(item.assignees)
+        record.draft = item.draft
+        record.refreshed_at = now
+    session.flush()
+    session.execute(delete(WorkItemAssignee).where(WorkItemAssignee.user_id == user_id))
+    links = {(existing[(i.kind, i.gitlab_id)].id, i.relation) for i in items}
+    session.add_all(
+        WorkItemAssignee(work_item_id=wid, user_id=user_id, relation=rel, observed_at=now)
+        for wid, rel in links
+    )
+    session.flush()
+    delete_orphan_work_items(session)
+
+
+def delete_orphan_work_items(session: Session) -> int:
+    linked = exists().where(WorkItemAssignee.work_item_id == WorkItemRecord.id)
+    result = session.execute(delete(WorkItemRecord).where(~linked))
+    return int(result.rowcount)  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------- activity
+
+
+def add_user_events(
+    session: Session, user_id: int, events: list[ActivityEvent], now: datetime
+) -> int:
+    """Insert events not stored yet (incremental: event IDs are immutable)."""
+    ids = {event.id for event in events}
+    known = (
+        set(session.scalars(select(ActivityEventRecord.id).where(ActivityEventRecord.id.in_(ids))))
+        if ids
+        else set()
+    )
+    added = 0
+    for event in events:
+        if event.id in known:
+            continue
+        known.add(event.id)
+        session.add(
+            ActivityEventRecord(
+                id=event.id,
+                user_id=user_id,
+                project_id=event.project_id,
+                category=event.category,
+                action_name=event.action_name,
+                target_type=event.target_type,
+                target_title=event.target_title,
+                summary=event.summary,
+                occurred_at=event.created_at,
+                url_path=event.url_path,
+                fetched_at=now,
+            )
+        )
+        added += 1
+    return added
+
+
+# ---------------------------------------------------------------------- timelogs
+
+
+def replace_user_timelogs(
+    session: Session, user_id: int, logs: list[Timelog], window_start: datetime, now: datetime
+) -> None:
+    """Replace one user's time entries inside the window with the freshly fetched set."""
+    ids = {log.id for log in logs}
+    session.execute(
+        delete(TimelogRecord).where(
+            TimelogRecord.user_id == user_id, TimelogRecord.spent_at >= window_start
+        )
+    )
+    if ids:
+        session.execute(delete(TimelogRecord).where(TimelogRecord.id.in_(ids)))
+    session.add_all(
+        TimelogRecord(
+            id=log.id,
+            user_id=user_id,
+            project_id=log.project_id,
+            project_path=log.project_path,
+            spent_at=log.spent_at,
+            seconds=log.seconds,
+            summary=log.summary,
+            target_kind=log.target_kind,
+            target_iid=log.target_iid,
+            target_title=log.target_title,
+            web_url=log.web_url,
+            fetched_at=now,
+        )
+        for log in {log.id: log for log in logs}.values()
+    )
+
+
+# ---------------------------------------------------------------------- projects
+
+
+def projects_needing_refresh(session: Session, ids: set[int], stale_before: datetime) -> set[int]:
+    if not ids:
+        return set()
+    fresh = set(
+        session.scalars(
+            select(Project.id).where(Project.id.in_(ids), Project.refreshed_at >= stale_before)
+        )
+    )
+    return ids - fresh
+
+
+def upsert_project(session: Session, project: GitLabProject, now: datetime) -> None:
+    record = session.get(Project, project.id)
+    if record is None:
+        record = Project(id=project.id)
+        session.add(record)
+    record.name = project.name
+    record.path_with_namespace = project.path_with_namespace
+    record.web_url = project.web_url
+    record.refreshed_at = now

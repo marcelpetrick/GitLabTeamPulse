@@ -7,23 +7,28 @@ successful data. Every successful step commits its data, its sync state and a bu
 
 from __future__ import annotations
 
+import asyncio
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import Engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
-from gitlab_team_pulse import store
+from gitlab_team_pulse import retention, store
 from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.gitlab.client import GitLabClient
 from gitlab_team_pulse.gitlab.errors import GitLabError
+from gitlab_team_pulse.gitlab.models import ActivityEvent, Timelog, WorkItem
 from gitlab_team_pulse.logging_setup import get_logger
 from gitlab_team_pulse.models import SyncRun
 
 log = get_logger("sync")
 
 Clock = Callable[[], datetime]
+RECENT_EVENTS = 12
 ClientFactory = Callable[[Settings], GitLabClient]
 
 NOT_CONFIGURED = (
@@ -71,6 +76,8 @@ class RuntimeState:
 
 
 class SyncService:
+    """Owns all GitLab-to-SQLite synchronization. Methods are called by the scheduler."""
+
     def __init__(
         self,
         settings: Settings,
@@ -195,6 +202,11 @@ class SyncService:
             store.bump_data_version(session)
             session.commit()
 
+    def directory_healthy(self) -> bool:
+        with self.session_factory() as session:
+            state = store.find_state(session, "directory")
+            return state is not None and state.status == "ok"
+
     def directory_due(self, now: datetime) -> bool:
         """Due hourly after a success; failed or never-run syncs retry sooner."""
         with self.session_factory() as session:
@@ -205,3 +217,299 @@ class SyncService:
             if state.status != "ok":
                 interval = min(interval, self.settings.selected_refresh_interval_seconds)
             return now >= state.last_attempt_at + timedelta(seconds=interval)
+
+    # ------------------------------------------------------------------ selected users
+
+    def selected_due(self, now: datetime) -> bool:
+        next_due = self.selected_next_due(now)
+        return next_due is None or now >= next_due
+
+    def selected_next_due(self, now: datetime) -> datetime | None:
+        with self.session_factory() as session:
+            state = store.find_state(session, "selected")
+            if state is None or state.last_attempt_at is None:
+                return None
+            return state.last_attempt_at + timedelta(
+                seconds=self.settings.selected_refresh_interval_seconds
+            )
+
+    def timelog_window_start(self, now: datetime) -> datetime:
+        """Local midnight ``activity_days - 1`` days ago: the window spans seven calendar days."""
+        local_today = now.astimezone(self.settings.tz).date()
+        first_day = local_today - timedelta(days=self.settings.activity_days - 1)
+        return datetime.combine(first_day, datetime.min.time(), self.settings.tz).astimezone(UTC)
+
+    async def sync_selected(self, trigger: str, user_ids: list[int] | None = None) -> str:
+        """Refresh work, activity and timelogs for selected users (or the given subset).
+
+        Returns ok / partial / error. Categories fail independently; a failure never removes
+        previously synchronized data.
+        """
+        run_id = self._begin("selected", trigger)
+        started = time.monotonic()
+        try:
+            with self.session_factory() as session:
+                users = [
+                    (u.id, u.username)
+                    for u in store.selected_users(session)
+                    if user_ids is None or u.id in user_ids
+                ]
+            try:
+                client = self.client() if users else None
+            except GitLabError as exc:
+                self._upstream(exc)
+                return self._finish_selected(
+                    run_id, user_ids, "error", str(exc), attempted=len(users), succeeded=0, exc=exc
+                )
+            outcomes: list[tuple[int, int, set[int]]] = []
+            if client is not None:
+                outcomes = await asyncio.gather(
+                    *(self._sync_user(client, uid, username, run_id) for uid, username in users)
+                )
+                project_ids = set().union(*(ids for _, _, ids in outcomes))
+                await self._resolve_projects(client, project_ids)
+            ok_parts = sum(ok for ok, _, _ in outcomes)
+            all_parts = sum(total for _, total, _ in outcomes)
+            succeeded = sum(1 for ok, total, _ in outcomes if ok == total)
+            if ok_parts == all_parts:
+                status = "ok"
+            elif ok_parts == 0:
+                status = "error"
+            else:
+                status = "partial"
+            summary = (
+                f"{succeeded}/{len(users)} users fully refreshed "
+                f"({ok_parts}/{all_parts} datasets) in {time.monotonic() - started:.1f}s"
+            )
+            log.info("selected refresh (%s): %s", trigger, summary)
+            return self._finish_selected(
+                run_id, user_ids, status, summary, attempted=len(users), succeeded=succeeded
+            )
+        finally:
+            self._end("selected")
+
+    def _finish_selected(
+        self,
+        run_id: str,
+        user_ids: list[int] | None,
+        status: str,
+        summary: str,
+        *,
+        attempted: int,
+        succeeded: int,
+        exc: GitLabError | None = None,
+    ) -> str:
+        now = self.clock()
+        with self.session_factory() as session:
+            run = session.get(SyncRun, run_id)
+            if run is not None:
+                run.users_attempted = attempted
+                run.users_succeeded = succeeded
+                store.finish_run(run, status=status, now=now, summary=summary)
+            if exc is not None:
+                store.record_error(
+                    session,
+                    subsystem="sync",
+                    operation="selected",
+                    message=str(exc),
+                    severity="warning" if exc.kind == "configuration" else "error",
+                    now=now,
+                )
+            else:
+                store.resolve_errors(session, subsystem="sync", operation="selected", now=now)
+            if user_ids is None:
+                state = store.get_state(session, "selected")
+                if run is not None:
+                    store.mark_attempt(state, run.started_at, run_id)
+                if status == "error":
+                    store.mark_failure(state, summary)
+                else:
+                    store.mark_success(state, now)
+                    state.status = status
+            store.bump_data_version(session)
+            session.commit()
+        return status
+
+    async def _sync_user(
+        self, client: GitLabClient, user_id: int, username: str, run_id: str
+    ) -> tuple[int, int, set[int]]:
+        """Returns (successful datasets, attempted datasets, referenced project IDs)."""
+        results = await asyncio.gather(
+            self._sync_work(client, user_id, run_id),
+            self._sync_activity(client, user_id, run_id),
+            self._sync_timelogs(client, user_id, username, run_id),
+        )
+        ok = sum(1 for success, _ in results if success)
+        projects: set[int] = set().union(*(ids for _, ids in results))
+        return ok, len(results), projects
+
+    async def _category[T](
+        self,
+        category: str,
+        user_id: int,
+        run_id: str,
+        fetch: Callable[[], Awaitable[T]],
+        write: Callable[[Session, T, datetime], tuple[str | None, set[int]]],
+    ) -> tuple[bool, set[int]]:
+        """Fetch, then write atomically; on any failure keep the last known good data."""
+        try:
+            data = await fetch()
+        except GitLabError as exc:
+            self._upstream(exc)
+            self._category_failed(category, user_id, run_id, str(exc), "sync")
+            log.warning("user=%d %s refresh failed: %s", user_id, category, exc)
+            return False, set()
+        except Exception as exc:
+            log.exception("user=%d %s refresh crashed", user_id, category)
+            self._category_failed(category, user_id, run_id, f"internal error: {exc!r}", "sync")
+            return False, set()
+        self._upstream(None)
+        now = self.clock()
+        try:
+            with self.session_factory() as session:
+                cursor, project_ids = write(session, data, now)
+                state = store.get_state(session, category, user_id)
+                store.mark_attempt(state, now, run_id)
+                store.mark_success(state, now, cursor=cursor)
+                store.resolve_errors(
+                    session, subsystem="sync", operation=category, user_id=user_id, now=now
+                )
+                store.bump_data_version(session)
+                session.commit()
+        except SQLAlchemyError as exc:
+            log.exception("user=%d %s could not be stored", user_id, category)
+            self._category_failed(
+                category, user_id, run_id, f"database error: {type(exc).__name__}", "database"
+            )
+            return False, set()
+        return True, project_ids
+
+    def _category_failed(
+        self, category: str, user_id: int, run_id: str, message: str, subsystem: str
+    ) -> None:
+        now = self.clock()
+        with self.session_factory() as session:
+            state = store.get_state(session, category, user_id)
+            store.mark_attempt(state, now, run_id)
+            store.mark_failure(state, message)
+            store.record_error(
+                session,
+                subsystem=subsystem,
+                operation=category,
+                message=message,
+                user_id=user_id,
+                now=now,
+            )
+            store.bump_data_version(session)
+            session.commit()
+
+    async def _sync_work(
+        self, client: GitLabClient, user_id: int, run_id: str
+    ) -> tuple[bool, set[int]]:
+        cutoff = self.clock() - timedelta(days=self.settings.work_window_days)
+
+        def write(session: Session, items: list[WorkItem], now: datetime) -> tuple[None, set[int]]:
+            store.replace_user_work(session, user_id, items, now)
+            return None, {i.project_id for i in items if i.project_id is not None}
+
+        return await self._category(
+            "work", user_id, run_id, lambda: client.get_user_work(user_id, cutoff), write
+        )
+
+    async def _sync_activity(
+        self, client: GitLabClient, user_id: int, run_id: str
+    ) -> tuple[bool, set[int]]:
+        now = self.clock()
+        with self.session_factory() as session:
+            state = store.find_state(session, "activity", user_id)
+            cursor = state.cursor if state and state.status != "never" else None
+        after = now.date() - timedelta(days=self.settings.activity_days + 1)
+        if cursor:
+            # Incremental: only days since the newest stored event (GitLab's `after` is by date).
+            after = max(after, datetime.fromisoformat(cursor).date() - timedelta(days=1))
+
+        async def fetch() -> list[ActivityEvent]:
+            events = await client.get_user_recent_activity(user_id, after)
+            if cursor is None and len(events) < RECENT_EVENTS:
+                older = await client.get_user_recent_activity(user_id, limit=RECENT_EVENTS)
+                events = [*events, *(e for e in older if e.id not in {x.id for x in events})]
+            return events
+
+        def write(
+            session: Session, events: list[ActivityEvent], stamp: datetime
+        ) -> tuple[str | None, set[int]]:
+            store.add_user_events(session, user_id, events, stamp)
+            newest = max((e.created_at for e in events), default=None)
+            previous = datetime.fromisoformat(cursor) if cursor else None
+            candidates = [d for d in (newest, previous) if d is not None]
+            new_cursor = max(candidates).isoformat() if candidates else None
+            return new_cursor, {e.project_id for e in events if e.project_id is not None}
+
+        return await self._category("activity", user_id, run_id, fetch, write)
+
+    async def _sync_timelogs(
+        self, client: GitLabClient, user_id: int, username: str, run_id: str
+    ) -> tuple[bool, set[int]]:
+        now = self.clock()
+        start = self.timelog_window_start(now)
+
+        def write(session: Session, logs: list[Timelog], stamp: datetime) -> tuple[None, set[int]]:
+            store.replace_user_timelogs(session, user_id, logs, start, stamp)
+            return None, {t.project_id for t in logs if t.project_id is not None}
+
+        return await self._category(
+            "timelogs",
+            user_id,
+            run_id,
+            lambda: client.get_user_timelogs(username, start, now),
+            write,
+        )
+
+    async def _resolve_projects(self, client: GitLabClient, project_ids: set[int]) -> None:
+        """Fetch metadata only for referenced projects that are unknown or older than a day."""
+        now = self.clock()
+        with self.session_factory() as session:
+            missing = store.projects_needing_refresh(
+                session, project_ids, now - timedelta(hours=self.settings.retention_hours)
+            )
+        if not missing:
+            return
+        results = await asyncio.gather(
+            *(client.get_project(pid) for pid in sorted(missing)), return_exceptions=True
+        )
+        with self.session_factory() as session:
+            for pid, result in zip(sorted(missing), results, strict=True):
+                if isinstance(result, BaseException):
+                    log.warning("project=%d metadata unavailable: %s", pid, result)
+                    continue
+                store.upsert_project(session, result, now)
+            store.bump_data_version(session)
+            session.commit()
+
+    # ------------------------------------------------------------------ cleanup
+
+    def cleanup(self) -> str:
+        """Apply retention; failures are recorded, never raised into the scheduler."""
+        now = self.clock()
+        try:
+            with self.session_factory() as session:
+                stats = retention.cleanup(session, self.settings, now)
+                store.resolve_errors(session, subsystem="cleanup", now=now)
+                session.commit()
+                bind = session.get_bind()
+            if isinstance(bind, Engine):
+                retention.vacuum_if_needed(bind)
+        except SQLAlchemyError as exc:
+            log.exception("cleanup failed")
+            with self.session_factory() as session:
+                store.record_error(
+                    session,
+                    subsystem="cleanup",
+                    operation="retention",
+                    message=f"cleanup failed: {type(exc).__name__}",
+                    now=now,
+                )
+                session.commit()
+            return "error"
+        log.info("cleanup: %s", stats.summary())
+        return "ok"
