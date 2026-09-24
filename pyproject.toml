@@ -52,7 +52,7 @@ path = "src/gitlab_team_pulse/__init__.py"
 packages = ["src/gitlab_team_pulse"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/gitlab_team_pulse", "tests", "README.md", "LICENSE", "CHANGELOG.md"]
+include = ["src/gitlab_team_pulse", "tests", "docs", "README.md", "LICENSE", "CHANGELOG.md", "VISION.md"]
 
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers", "-m", "not e2e"]
