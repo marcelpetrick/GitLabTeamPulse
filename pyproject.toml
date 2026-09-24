@@ -76,7 +76,7 @@ target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF", "PT", "S", "ASYNC"]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4", "RUF", "PT", "S", "ASYNC", "DTZ"]
 ignore = ["S101"]
 
 [tool.ruff.lint.per-file-ignores]
