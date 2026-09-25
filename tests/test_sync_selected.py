@@ -75,11 +75,19 @@ async def test_only_selected_users_are_crawled(
     service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI
 ) -> None:
     await select_users(service, session_factory, ALEX)
-    before = fake_app.state.requests
+    fake_app.state.request_log.clear()
     await service.sync_selected("scheduled")
-    requests = fake_app.state.requests - before
-    # work (3 lists) + epics per top-level group (4) + activity + timelogs + a few projects
-    assert requests <= 5 + 4 + 6
+    paths = [path for path, _ in fake_app.state.request_log]
+    queries = [query for _, query in fake_app.state.request_log]
+    user_paths = [p for p in paths if p.startswith("/api/v4/users/")]
+    assert user_paths
+    assert all(p == f"/api/v4/users/{ALEX}/events" for p in user_paths)
+    assert all(
+        f"assignee_id={ALEX}" in q or f"reviewer_id={ALEX}" in q
+        for p, q in zip(paths, queries, strict=True)
+        if p in {"/api/v4/issues", "/api/v4/merge_requests"}
+    )
+    assert "/api/v4/users" not in paths  # the directory is not crawled by the selected refresh
     with session_factory() as session:
         assert count(session, ActivityEventRecord, user_id=3) == 0
 

@@ -22,6 +22,7 @@ from gitlab_team_pulse import store
 from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.models import (
     ActivityEventRecord,
+    ContributionDay,
     ErrorRecord,
     Project,
     SyncRun,
@@ -34,13 +35,15 @@ from gitlab_team_pulse.models import (
 
 RECENT_EVENTS_KEPT = 12
 VACUUM_FREE_PAGES = 256
-USER_CATEGORIES = ("work", "activity", "timelogs")
+USER_CATEGORIES = ("work", "activity", "timelogs", "contributions")
+CONTRIBUTION_DAYS_KEPT = 7 * 54  # the 53-week grid plus a week of slack
 
 
 @dataclass
 class CleanupStats:
     events: int = 0
     timelogs: int = 0
+    contribution_days: int = 0
     work_links: int = 0
     work_items: int = 0
     projects: int = 0
@@ -87,7 +90,11 @@ def _trim_events(session: Session, user_id: int, before: datetime) -> int:
 
 
 def _purge_user(session: Session, user_id: int, stats: CleanupStats) -> None:
-    for model, attr in ((ActivityEventRecord, "events"), (TimelogRecord, "timelogs")):
+    for model, attr in (
+        (ActivityEventRecord, "events"),
+        (TimelogRecord, "timelogs"),
+        (ContributionDay, "contribution_days"),
+    ):
         result = session.execute(delete(model).where(model.user_id == user_id))
         setattr(stats, attr, getattr(stats, attr) + int(result.rowcount))  # type: ignore[attr-defined]
     result = session.execute(delete(WorkItemAssignee).where(WorkItemAssignee.user_id == user_id))
@@ -132,6 +139,14 @@ def cleanup(session: Session, settings: Settings, now: datetime) -> CleanupStats
             stats.timelogs += int(result.rowcount)  # type: ignore[attr-defined]
         elif timelog_state is not None:
             stats.kept_last_known_good.append(f"timelogs:{user_id}")
+
+    # The calendar only ever shows 53 weeks; older days are never needed again.
+    result = session.execute(
+        delete(ContributionDay).where(
+            ContributionDay.day < (now - timedelta(days=CONTRIBUTION_DAYS_KEPT)).date()
+        )
+    )
+    stats.contribution_days += int(result.rowcount)  # type: ignore[attr-defined]
 
     stats.work_items += store.delete_orphan_work_items(session)
 

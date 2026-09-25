@@ -7,7 +7,7 @@ write its data, its sync state and the bumped ``data_version`` in one atomic com
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import delete, exists, func, select, update
 from sqlalchemy.orm import Session
@@ -22,6 +22,7 @@ from gitlab_team_pulse.gitlab.models import (
 from gitlab_team_pulse.models import (
     ActivityEventRecord,
     AppState,
+    ContributionDay,
     ErrorRecord,
     Project,
     SyncRun,
@@ -454,3 +455,22 @@ def upsert_project(session: Session, project: GitLabProject, now: datetime) -> N
     record.path_with_namespace = project.path_with_namespace
     record.web_url = project.web_url
     record.refreshed_at = now
+
+
+# ---------------------------------------------------------------------- contributions
+
+
+def replace_contribution_days(
+    session: Session, user_id: int, counts: dict[date, int], from_day: date
+) -> None:
+    """Replace one user's daily contribution counts from ``from_day`` onwards."""
+    session.execute(
+        delete(ContributionDay).where(
+            ContributionDay.user_id == user_id, ContributionDay.day >= from_day
+        )
+    )
+    session.add_all(
+        ContributionDay(user_id=user_id, day=day, count=count)
+        for day, count in sorted(counts.items())
+        if day >= from_day and count > 0
+    )

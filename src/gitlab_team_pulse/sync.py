@@ -11,7 +11,7 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -21,7 +21,12 @@ from gitlab_team_pulse import retention, store
 from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.gitlab.client import GitLabClient
 from gitlab_team_pulse.gitlab.errors import GitLabCapabilityError, GitLabError
-from gitlab_team_pulse.gitlab.models import ActivityEvent, Timelog, WorkItem
+from gitlab_team_pulse.gitlab.models import (
+    ActivityEvent,
+    Timelog,
+    WorkItem,
+    counts_as_contribution,
+)
 from gitlab_team_pulse.logging_setup import get_logger
 from gitlab_team_pulse.models import SyncRun
 
@@ -29,6 +34,15 @@ log = get_logger("sync")
 
 Clock = Callable[[], datetime]
 RECENT_EVENTS = 12
+CONTRIBUTION_WEEKS = 53
+
+
+def contribution_grid_start(today: date) -> date:
+    """First day of the 53-week calendar grid: a Sunday, as on GitLab profiles."""
+    start = today - timedelta(weeks=CONTRIBUTION_WEEKS - 1)
+    return start - timedelta(days=(start.weekday() + 1) % 7)
+
+
 ClientFactory = Callable[[Settings], GitLabClient]
 
 NOT_CONFIGURED = (
@@ -366,11 +380,14 @@ class SyncService:
         self, client: GitLabClient, user_id: int, username: str, run_id: str
     ) -> tuple[int, int, set[int]]:
         """Returns (successful datasets, attempted datasets, referenced project IDs)."""
-        results = await asyncio.gather(
+        jobs = [
             self._sync_work(client, user_id, username, run_id),
             self._sync_activity(client, user_id, run_id),
             self._sync_timelogs(client, user_id, username, run_id),
-        )
+        ]
+        if self.contributions_due(user_id, self.clock()):
+            jobs.append(self._sync_contributions(client, user_id, run_id))
+        results = await asyncio.gather(*jobs)
         ok = sum(1 for success, _ in results if success)
         projects: set[int] = set().union(*(ids for _, ids in results))
         return ok, len(results), projects
@@ -553,6 +570,54 @@ class SyncService:
             lambda: client.get_user_timelogs(username, start, now),
             write,
         )
+
+    def contribution_window_start(self, now: datetime) -> date:
+        """First day of the calendar grid in the configured time zone."""
+        return contribution_grid_start(now.astimezone(self.settings.tz).date())
+
+    def contributions_due(self, user_id: int, now: datetime) -> bool:
+        """The calendar changes slowly: refresh at most every N minutes, not every run."""
+        with self.session_factory() as session:
+            state = store.find_state(session, "contributions", user_id)
+            if state is None or state.last_attempt_at is None:
+                return True
+            interval = timedelta(minutes=self.settings.contributions_refresh_minutes)
+            return now >= state.last_attempt_at + interval
+
+    async def _sync_contributions(
+        self, client: GitLabClient, user_id: int, run_id: str
+    ) -> tuple[bool, set[int]]:
+        """Daily contribution counts, computed from events with GitLab's calendar rule.
+
+        The first sync backfills the whole grid; later syncs recount only from the last
+        counted day (the previous day is included to absorb late-arriving events).
+        """
+        now = self.clock()
+        start = self.contribution_window_start(now)
+        with self.session_factory() as session:
+            state = store.find_state(session, "contributions", user_id)
+            cursor = state.cursor if state and state.last_success_at else None
+        from_day = (
+            start if cursor is None else max(start, date.fromisoformat(cursor) - timedelta(days=1))
+        )
+        tz = self.settings.tz
+
+        async def fetch() -> list[ActivityEvent]:
+            # GitLab's `after` is an exclusive UTC date: step back two days to cover time zones.
+            return await client.get_user_recent_activity(user_id, from_day - timedelta(days=2))
+
+        def write(
+            session: Session, events: list[ActivityEvent], stamp: datetime
+        ) -> tuple[str, set[int]]:
+            counts: dict[date, int] = {}
+            for event in events:
+                day = event.created_at.astimezone(tz).date()
+                if day >= from_day and counts_as_contribution(event):
+                    counts[day] = counts.get(day, 0) + 1
+            store.replace_contribution_days(session, user_id, counts, from_day)
+            return stamp.astimezone(tz).date().isoformat(), set()
+
+        return await self._category("contributions", user_id, run_id, fetch, write)
 
     async def _resolve_projects(self, client: GitLabClient, project_ids: set[int]) -> None:
         """Fetch metadata only for referenced projects that are unknown or older than a day."""

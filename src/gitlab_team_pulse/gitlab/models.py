@@ -372,3 +372,18 @@ def parse_epic(payload: dict[str, Any]) -> WorkItem:
         assignees=tuple(str(a["username"]) for a in assignees),
         relation="assignee",
     )
+
+
+CONTRIBUTION_TARGETS = {"Issue", "WorkItem", "MergeRequest", "DesignManagement::Design"}
+CONTRIBUTION_ACTIONS = {"opened", "created", "closed", "accepted", "merged", "approved"}
+
+
+def counts_as_contribution(event: ActivityEvent) -> bool:
+    """GitLab's contribution-calendar rule (``Event.contributions``).
+
+    Pushes and comments always count (a push once, not per commit); issues, work items, merge
+    requests and designs count when they are created, closed, merged or approved.
+    """
+    if event.category in {"push", "comment"}:
+        return True
+    return event.target_type in CONTRIBUTION_TARGETS and event.action_name in CONTRIBUTION_ACTIONS

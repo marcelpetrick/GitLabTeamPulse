@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     error_retention_days: int = Field(default=7, ge=1)
     work_window_days: int = Field(default=30, ge=1, le=365)
     activity_days: int = Field(default=7, ge=1, le=31)
+    contributions_refresh_minutes: int = Field(default=60, ge=10)
     timezone: str = "UTC"
 
     @field_validator("gitlab_url")

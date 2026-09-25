@@ -242,3 +242,15 @@ class TimelogRecord(Base):
     fetched_at: Mapped[datetime]
 
     __table_args__ = (Index("ix_timelogs_user_time", "user_id", "spent_at"),)
+
+
+class ContributionDay(Base):
+    """Number of GitLab contributions of one user on one local calendar day."""
+
+    __tablename__ = "contribution_days"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(primary_key=True)
+    count: Mapped[int] = mapped_column(Integer)

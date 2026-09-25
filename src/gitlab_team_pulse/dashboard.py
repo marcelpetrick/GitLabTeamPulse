@@ -19,6 +19,7 @@ from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.freshness import FreshnessInfo, classify
 from gitlab_team_pulse.models import (
     ActivityEventRecord,
+    ContributionDay,
     ErrorRecord,
     Project,
     SyncState,
@@ -27,7 +28,7 @@ from gitlab_team_pulse.models import (
     WorkItemAssignee,
     WorkItemRecord,
 )
-from gitlab_team_pulse.sync import RECENT_EVENTS, RuntimeState
+from gitlab_team_pulse.sync import RECENT_EVENTS, RuntimeState, contribution_grid_start
 
 CATEGORIES = ("push", "comment", "issue", "merge_request", "other")
 USER_DATASETS = ("work", "activity", "timelogs")
@@ -308,6 +309,47 @@ class DashboardReader:
             }
         return result
 
+    def contributions(
+        self, user_ids: list[int], states: dict[str, SyncState]
+    ) -> dict[int, dict[str, Any]]:
+        """53-week calendar per user: counts aligned to a Sunday-based grid start."""
+        today = self.now.astimezone(self.settings.tz).date()
+        start = contribution_grid_start(today)
+        rows = self.session.execute(
+            select(ContributionDay.user_id, ContributionDay.day, ContributionDay.count).where(
+                ContributionDay.user_id.in_(user_ids), ContributionDay.day >= start
+            )
+        ).all()
+        size = (today - start).days + 1
+        result: dict[int, dict[str, Any]] = {}
+        for user_id in user_ids:
+            counts = [0] * size
+            for uid, day, count in rows:
+                if uid == user_id and day <= today:
+                    counts[(day - start).days] = count
+            busiest = max(range(size), key=lambda i: (counts[i], i)) if any(counts) else None
+            state = states.get(store.state_key("contributions", user_id))
+            freshness = _dataset_freshness(
+                state,
+                running="selected" in self.runtime.running
+                and (self.runtime.selected_scope is None or user_id in self.runtime.selected_scope),
+                interval=self.settings.contributions_refresh_minutes * 60,
+                settings=self.settings,
+                now=self.now,
+            )
+            result[user_id] = {
+                "start": start,
+                "end": today,
+                "counts": counts,
+                "total": sum(counts),
+                "max": max(counts),
+                "busiest": {"date": start + timedelta(days=busiest), "count": counts[busiest]}
+                if busiest is not None
+                else None,
+                "freshness": freshness.as_dict(),
+            }
+        return result
+
     def cards(self, users: list[User]) -> list[dict[str, Any]]:
         ids = [u.id for u in users]
         if not ids:
@@ -316,6 +358,7 @@ class DashboardReader:
         work = self.work(ids)
         activity = self.activity(ids)
         time = self.time(ids)
+        contributions = self.contributions(ids, states)
         cards = []
         for user in users:
             items = work.get(user.id, [])
@@ -338,6 +381,7 @@ class DashboardReader:
                     "activity_preview_count": ACTIVITY_PREVIEW,
                     "activity_days": user_activity["days"],
                     "time": user_time,
+                    "contributions": contributions[user.id],
                 }
             )
         return cards

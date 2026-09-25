@@ -192,6 +192,17 @@ def build_data(now: datetime | None = None, seed: int = 7) -> FakeData:
             )
         for _ in range(rng.randint(12, 36)):
             add_event(data, user["id"], now - timedelta(minutes=rng.randint(5, 9 * 24 * 60)), rng)
+        # A year of older history for the contribution calendar: busier on weekdays, with
+        # quiet stretches (holidays) so the graph looks like a real profile.
+        vacation = rng.randint(20, 330)
+        for days_ago in range(10, 366):
+            if vacation <= days_ago < vacation + 14:
+                continue
+            weekday = (now - timedelta(days=days_ago)).weekday()
+            if rng.random() < (0.12 if weekday >= 5 else 0.72):
+                for _ in range(rng.choice([1, 1, 2, 3, 4, 6, 9, 14])):
+                    minute = rng.randint(8 * 60, 18 * 60)
+                    add_event(data, user["id"], now - timedelta(days=days_ago, minutes=minute), rng)
         timelog_id = len(data.timelogs)
         for day in range(7):
             if rng.random() < 0.25:
@@ -328,6 +339,7 @@ def create_fake_gitlab(
     app.state.down = False
     app.state.admin = admin
     app.state.requests = 0
+    app.state.request_log = []  # (path, query) of every API request, for load assertions
     app.state.graphql_error = None  # set to a message to simulate missing GraphQL capability
     app.state.epics_supported = True
     app.state.latency = 0.0  # seconds added to every API response (makes "Refreshing" visible)
@@ -359,6 +371,7 @@ def create_fake_gitlab(
         if request.url.path.startswith("/-/fake"):
             return await call_next(request)  # type: ignore[no-any-return]
         app.state.requests += 1
+        app.state.request_log.append((request.url.path, str(request.url.query)))
         if app.state.latency:
             await asyncio.sleep(app.state.latency)
         if app.state.down:
