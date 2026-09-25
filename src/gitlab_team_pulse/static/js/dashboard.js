@@ -2,6 +2,7 @@
 
 import { api } from "./api.js";
 import { activityChart, timeChart } from "./charts.js";
+import { Skyline, heatmap, legend } from "./contributions.js";
 import { clear, h, icon, s, safeLink } from "./dom.js";
 import { exactTime, formatDate, formatDuration, plural, todayIso } from "./format.js";
 import { avatar, freshnessPill, rel, toast } from "./ui.js";
@@ -53,7 +54,7 @@ export class DashboardView {
 
   uiState(userId) {
     if (!this.cardState.has(userId)) {
-      this.cardState.set(userId, { sort: "updated_desc", filter: "all", allActivity: false, allWork: false, entries: false });
+      this.cardState.set(userId, { sort: "updated_desc", filter: "all", allActivity: false, allWork: false, entries: false, calendar: "2d" });
     }
     return this.cardState.get(userId);
   }
@@ -185,6 +186,7 @@ export class DashboardView {
           h("div", { class: "panel-head" }, h("h3", {}, "Activity · last 7 days")),
           activityChart(card.activity_days, today)),
         this.timePanel(card, state, today)),
+      this.contributionPanel(card, state),
       this.workPanel(card, state));
     return article;
   }
@@ -270,6 +272,46 @@ export class DashboardView {
       panel.append(toggle, table);
     }
     return panel;
+  }
+
+  contributionPanel(card, state) {
+    const calendar = card.contributions;
+    const section = h("section", { class: "contributions", "aria-label": "Contributions in the last 12 months" });
+    if (!calendar) return section;
+    const body = h("div", { class: "contributions-body" });
+    const render = () => {
+      clear(body);
+      if (state.calendar === "3d") {
+        const skyline = new Skyline(calendar);
+        body.append(skyline.element);
+      } else {
+        body.append(h("div", { class: "heatmap-scroll" }, heatmap(calendar)), legend());
+      }
+    };
+    const toggle = h("div", { class: "chip-group small", role: "group", "aria-label": "Contribution view" },
+      [["2d", "2D calendar"], ["3d", "3D skyline"]].map(([key, label]) =>
+        h("button", {
+          type: "button", "aria-pressed": String(state.calendar === key), dataset: { calendarView: key },
+          onclick: () => {
+            state.calendar = key;
+            for (const b of toggle.children) b.setAttribute("aria-pressed", String(b.dataset.calendarView === key));
+            render();
+          },
+        }, label)));
+    const busiest = calendar.busiest
+      ? ` · busiest day ${formatDate(calendar.busiest.date)} (${calendar.busiest.count})`
+      : "";
+    section.append(
+      h("div", { class: "panel-head" },
+        h("div", {},
+          h("h3", {}, "Contributions · last 12 months"),
+          h("div", { class: "muted contributions-summary" },
+            `${plural(calendar.total, "contribution")}${busiest}`, " ",
+            freshnessPill(calendar.freshness, { small: true, label: "Contribution calendar" }))),
+        toggle),
+      body);
+    render();
+    return section;
   }
 
   workPanel(card, state) {

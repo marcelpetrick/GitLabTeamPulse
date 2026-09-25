@@ -13,6 +13,11 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
+  --heat-0: #ebedf0;
+  --heat-1: #acd5f2;
+  --heat-2: #7fa8c9;
+  --heat-3: #527ba0;
+  --heat-4: #254e77;
   --bg: #f5f6f8;
   --surface: #ffffff;
   --surface-2: #f2f4f7;
@@ -46,6 +51,11 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
+  --heat-0: #262c35;
+  --heat-1: #1f4f73;
+  --heat-2: #2f6f9f;
+  --heat-3: #4b95cc;
+  --heat-4: #86c1f0;
   --bg: #0f1216;
   --surface: #171b21;
   --surface-2: #1d222a;
@@ -469,3 +479,24 @@ main { max-width: 1480px; margin: 0 auto; padding: 24px; outline: none; }
 .time-projects .grow { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .stat .value svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.4; vertical-align: -2px; }
 .card-empty .spinner { vertical-align: -2px; color: var(--info); }
+
+/* ---------------------------------------------------------------- contribution calendar */
+.contributions { border-top: 1px solid var(--border); padding: 16px 20px 18px; }
+.contributions .panel-head { flex-wrap: wrap; align-items: flex-start; }
+.contributions-summary { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.heatmap-scroll { overflow-x: auto; }
+.heatmap { display: block; width: 100%; min-width: 640px; max-width: 980px; height: auto; }
+.heatmap:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+.heat-label { fill: var(--muted); font-size: 9px; }
+.heat-cell.is-active { stroke: var(--text); stroke-width: 1.5; }
+.lvl-0 { fill: var(--heat-0); background: var(--heat-0); }
+.lvl-1 { fill: var(--heat-1); background: var(--heat-1); }
+.lvl-2 { fill: var(--heat-2); background: var(--heat-2); }
+.lvl-3 { fill: var(--heat-3); background: var(--heat-3); }
+.lvl-4 { fill: var(--heat-4); background: var(--heat-4); }
+.heat-legend { display: flex; align-items: center; gap: 4px; justify-content: flex-end; font-size: 0.78rem; color: var(--muted); margin-top: 6px; max-width: 980px; }
+.heat-legend i { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+.skyline-canvas { display: block; width: 100%; max-width: 1100px; border-radius: 8px; background: var(--surface); cursor: grab; touch-action: none; }
+.skyline-canvas:active { cursor: grabbing; }
+.skyline-canvas:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.skyline-controls { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; font-size: 0.82rem; max-width: 1100px; }

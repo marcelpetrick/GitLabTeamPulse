@@ -150,3 +150,51 @@ def test_people_page_load_does_not_fetch_the_dashboard(page: Page, stack: LiveSt
     expect(page.locator(".people-row[data-user-id]")).to_have_count(32)
     assert not any(url.endswith("/api/dashboard") for url in requested)
     assert any(url.endswith("/api/users") for url in requested)
+
+
+def test_contribution_calendar_2d_and_3d(page: Page, stack: LiveStack) -> None:
+    select_alex(page, stack)
+    page.click("#tab-dashboard")
+    card = page.locator(f'article.card[data-user-id="{ALEX}"]')
+    section = card.locator("section.contributions")
+    expect(section).to_contain_text("contributions")
+    cells = section.locator("rect.heat-cell")
+    expect(cells.first).to_be_visible()
+    assert 52 * 7 < cells.count() <= 53 * 7
+    busy = section.locator("rect.heat-cell:not(.lvl-0)")
+    assert busy.count() > 50  # a year of history, not only the last week
+    busy.first.hover()
+    expect(page.locator("#tooltip")).to_contain_text("contribution")
+    section.locator("svg.heatmap").focus()
+    page.keyboard.press("ArrowLeft")
+    expect(section.locator("rect.heat-cell.is-active")).to_have_count(1)
+
+    section.get_by_role("button", name="3D skyline").click()
+    canvas = section.locator("canvas.skyline-canvas")
+    expect(canvas).to_be_visible()
+    page.wait_for_timeout(300)
+    snapshot = "el => el.toDataURL()"
+    canvas.scroll_into_view_if_needed()
+    initial = canvas.evaluate(snapshot)
+    box = canvas.bounding_box()
+    assert box is not None
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] / 2 + 120, box["y"] + box["height"] / 2, steps=6)
+    page.mouse.up()
+    rotated = canvas.evaluate(snapshot)
+    assert rotated != initial
+    page.mouse.wheel(0, -300)
+    page.wait_for_timeout(100)
+    zoomed = canvas.evaluate(snapshot)
+    assert zoomed != rotated
+    canvas.focus()
+    page.keyboard.press("ArrowRight")
+    assert canvas.evaluate(snapshot) != zoomed
+    section.get_by_role("button", name="Reset view").click()
+    assert canvas.evaluate(snapshot) == initial
+
+    # The chosen view survives the periodic re-render of the dashboard.
+    page.click("#refresh-now")
+    expect(page.locator("#refresh-now")).to_contain_text("Refresh now", timeout=30000)
+    expect(section.locator("canvas.skyline-canvas")).to_be_visible()
