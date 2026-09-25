@@ -82,22 +82,49 @@ docker run --rm -p 8000:8000 ghcr.io/marcelpetrick/gitlabteampulse:latest demo -
 
 ## Run it against your GitLab
 
-1. Create a token with the **`read_api`** scope. An **administrator** token is recommended:
-   without admin rights, GitLab hides blocked, deactivated and internal accounts, and the
-   dashboard says so in its diagnostics instead of silently claiming completeness. The
-   top-level GraphQL `timelogs` query may also require admin rights on some versions
-   (see [`docs/GRAPHQL.md`](docs/GRAPHQL.md#permissions)). No write scope is ever needed.
-2. Configure and start:
+**TL;DR**
+
+1. In GitLab: **avatar → Edit profile → Access tokens → Add new token**
+   (`https://<your-gitlab>/-/user_settings/personal_access_tokens`). Tick only the
+   **`read_api`** scope, then copy the `glpat-…` token.
+2. In a terminal:
 
 ```bash
-export TEAMPULSE_GITLAB_URL=https://gitlab.example.com
-export TEAMPULSE_GITLAB_TOKEN=glpat-...          # or TEAMPULSE_GITLAB_TOKEN_FILE=/path/to/secret
-uv run gitlab-team-pulse doctor                  # checks config, database, GitLab, token rights, timelogs
-uv run gitlab-team-pulse serve                   # http://127.0.0.1:8000
+git clone https://github.com/marcelpetrick/GitLabTeamPulse.git && cd GitLabTeamPulse
+uv sync
+export TEAMPULSE_GITLAB_URL=https://gitlab.example.com                              # base URL, no trailing path
+read -rs "TEAMPULSE_GITLAB_TOKEN?GitLab token: " && export TEAMPULSE_GITLAB_TOKEN   # zsh; bash: read -rsp "GitLab token: " TEAMPULSE_GITLAB_TOKEN && export TEAMPULSE_GITLAB_TOKEN
+export TEAMPULSE_TIMEZONE=Europe/Berlin                                             # optional: calendar days in local time
+uv run gitlab-team-pulse doctor   # checks URL, token, admin rights and the timelogs query
+uv run gitlab-team-pulse serve    # open http://127.0.0.1:8000
 ```
 
-It can also be installed as a standalone tool: `make build && pipx install dist/gitlab_team_pulse-*.whl`
-(or `uv tool install .`).
+3. In the browser: **People** → tick the colleagues to follow → **Dashboard**. The first sync
+   starts right away; after that it refreshes every 10 minutes or on **Refresh now**.
+
+**Details**
+
+- **Token rights:** a `read_api` token is enough; no write scope is ever needed. An
+  **administrator** (or Auditor) account is recommended. Without it, GitLab hides blocked,
+  deactivated and internal accounts, and the dashboard says so in Diagnostics instead of
+  claiming completeness. The top-level GraphQL `timelogs` query may also need admin rights
+  (see [`docs/GRAPHQL.md`](docs/GRAPHQL.md#permissions)).
+- **Keep the token in a file instead of the shell:**
+
+  ```bash
+  mkdir -p ~/.config/gitlab-team-pulse
+  ( umask 077; read -rs "t?GitLab token: "; printf '%s' "$t" > ~/.config/gitlab-team-pulse/token )
+  export TEAMPULSE_GITLAB_TOKEN_FILE=~/.config/gitlab-team-pulse/token
+  ```
+
+- **Troubleshooting `doctor`:**
+  - *Redirected (301/302):* the URL scheme, host or path is off.
+  - *Certificate error:* set `TEAMPULSE_GITLAB_CA_BUNDLE=/path/to/company-ca.pem`.
+  - *Timelogs unavailable:* the account lacks the rights; everything else still works.
+- **State:** stored in `~/.local/share/gitlab-team-pulse/teampulse.db`, so the selection and
+  the cache survive restarts. The demo uses a separate `demo.db`.
+- **Standalone install:** `make build && pipx install dist/gitlab_team_pulse-*.whl` (or
+  `uv tool install .`).
 
 ### Docker / Compose (recommended for servers)
 
