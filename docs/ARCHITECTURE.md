@@ -196,6 +196,7 @@ sequenceDiagram
         Sync->>GL: issues, MRs, reviews, epics (GraphQL)
         Sync->>GL: events since the cursor (incremental)
         Sync->>GL: timelogs, last 7 days (GraphQL)
+        Sync->>GL: events for the contribution calendar (hourly at most, incremental)
     end
     alt dataset fetched
         Sync->>DB: one transaction: replace snapshot, mark success, bump data_version
@@ -214,8 +215,10 @@ sequenceDiagram
 
 ## Freshness state model
 
-Each dataset (the directory, the selected-user refresh, and every user's work, activity and
-timelogs) is classified independently, and the UI combines the results without hiding them.
+Each dataset (the directory, the selected-user refresh, and every user's work, activity,
+timelogs and contribution calendar) is classified independently, and the UI combines the
+results without hiding them. The calendar uses its own, longer refresh interval, so it is not
+reported as stale between its hourly refreshes.
 
 ```mermaid
 stateDiagram-v2
@@ -244,6 +247,7 @@ erDiagram
     users ||--o{ activity_events : authored
     users ||--o{ timelogs : logged
     users ||--o{ sync_state : "per dataset"
+    users ||--o{ contribution_days : "calendar"
     projects |o--o{ work_items : "project_id (resolved on demand)"
     projects |o--o{ activity_events : "project_id"
     projects |o--o{ timelogs : "project_id"
@@ -280,6 +284,11 @@ erDiagram
     projects {
         int id PK
         string path_with_namespace
+    }
+    contribution_days {
+        int user_id PK
+        date day PK "local calendar day"
+        int count "GitLab contribution rule"
     }
     sync_state {
         string key PK "e.g. activity:42, directory, selected"

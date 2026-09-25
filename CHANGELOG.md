@@ -3,6 +3,14 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## Unreleased (feature branch `feature/contribution-graph`, planned as 0.3.0)
+
+- Contribution calendar per person for the last 12 months, computed from GitLab events with
+  GitLab's contribution rule (the profile's `calendar.json` web route rejects API tokens).
+- 2D GitLab-style calendar grid and a rotatable, zoomable 3D skyline (dependency-free canvas).
+- New `contributions` dataset (backfill once, then incremental, refreshed at most hourly),
+  Alembic migration 0003 and `TEAMPULSE_CONTRIBUTIONS_REFRESH_MINUTES`.
+
 ## 0.2.x
 
 ### 0.2.0 (2026-09-24): epics

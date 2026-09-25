@@ -26,6 +26,8 @@ activity and seven days of actual GitLab timelogs. It also shows exactly how fre
 | Dark mode | People view |
 | --- | --- |
 | ![Dashboard (dark)](docs/media/dashboard-dark.png) | ![People view](docs/media/people.png) |
+| Contribution calendar (2D) | Contribution skyline (3D, rotate and zoom) |
+| ![Contribution calendar](docs/media/contributions-2d.png) | ![Contribution skyline](docs/media/contributions-3d.png) |
 
 When GitLab is unreachable, the dashboard keeps the last known good data, marks it with an
 icon and a text label (color is never the only signal), and explains the problem in the
@@ -47,6 +49,9 @@ diagnostics drawer:
   - Activity: the five latest actions at a glance, with all twelve one click away.
   - Charts: a stacked seven-day activity chart (pushes, comments, issues, merge requests,
     other) and daily logged time with per-project totals.
+  - Contributions: the last 12 months as a GitLab-style calendar, or as a 3D "skyline" you can
+    rotate and zoom. Counts use GitLab's contribution rule, computed from events (see
+    [the feature notes](docs/features/contribution-graph.md)).
 - **Facts only**: time comes from GitLab timelogs (one
   [GraphQL query](docs/GRAPHQL.md#1-timelogs-actual-logged-time) per user), never estimated. Nothing is scored, and
   there is no hard-coded 40-hour judgment. A week with no logged time is simply highlighted.
@@ -169,6 +174,7 @@ require a code change.
 | `TEAMPULSE_RETENTION_HOURS` / `TEAMPULSE_ERROR_RETENTION_DAYS` | `24` / `7` | Rolling cache and resolved-error retention |
 | `TEAMPULSE_WORK_WINDOW_DAYS` | `30` | "Recently relevant" work window |
 | `TEAMPULSE_ACTIVITY_DAYS` | `7` | Activity and timelog window |
+| `TEAMPULSE_CONTRIBUTIONS_REFRESH_MINUTES` | `60` | How often the 12-month contribution calendar is refreshed |
 | `TEAMPULSE_TIMEZONE` | `UTC` | Time zone for calendar-day buckets |
 
 The token is never written to SQLite, logs (a redaction filter guards them), API responses or

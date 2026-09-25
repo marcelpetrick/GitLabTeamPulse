@@ -1,6 +1,6 @@
 # Feature: contribution graph (2D calendar and 3D skyline)
 
-Status: **in development on `feature/contribution-graph`**. It will be squash-merged into
+Status: **implemented on `feature/contribution-graph`, in review**. It will be squash-merged into
 `master` after review, with a minor version bump (0.3.0).
 
 ## Goal
