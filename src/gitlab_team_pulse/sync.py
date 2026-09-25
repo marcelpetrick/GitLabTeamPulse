@@ -81,6 +81,7 @@ class RuntimeState:
     selected_scope: frozenset[int] | None = None  # users of the running selected run; None = all
     epics: str = "unknown"  # unknown | available | unavailable
     epics_checked_at: datetime | None = None
+    epics_failing_since: datetime | None = None
 
 
 class SyncService:
@@ -436,8 +437,12 @@ class SyncService:
 
     async def _epics(
         self, client: GitLabClient, username: str, items: list[WorkItem], cutoff: datetime
-    ) -> list[WorkItem]:
-        """Best-effort epics for the top-level groups the user's work lives in."""
+    ) -> list[WorkItem] | None:
+        """Best-effort epics for the top-level groups the user's work lives in.
+
+        Returns None when epics worked before but fail now: the caller then keeps the stored
+        epics while issues and merge requests still refresh.
+        """
         now = self.clock()
         checked = self.runtime.epics_checked_at
         if self.runtime.epics == "unavailable" and checked and now - checked < EPICS_RECHECK:
@@ -449,10 +454,15 @@ class SyncService:
             epics = await client.get_user_epics(username, groups, cutoff)
         except GitLabCapabilityError as exc:
             if self.runtime.epics == "available":
-                # Epics worked before: treat this as a failure of the work dataset so the last
-                # known good snapshot (including epics) is kept instead of silently dropped.
-                raise
+                since = self.runtime.epics_failing_since or now
+                self.runtime.epics_failing_since = since
+                if now - since < EPICS_RECHECK:
+                    # Possibly temporary: keep the last known good epics, refresh the rest.
+                    log.warning("epics failed, keeping stored epics: %s", exc)
+                    return None
+                # Failing for longer than the recheck window: the capability is really gone.
             self.runtime.epics = "unavailable"
+            self.runtime.epics_failing_since = None
             self.runtime.epics_checked_at = now
             with self.session_factory() as session:
                 store.record_error(
@@ -472,6 +482,7 @@ class SyncService:
                 session.commit()
         self.runtime.epics = "available"
         self.runtime.epics_checked_at = now
+        self.runtime.epics_failing_since = None
         return epics
 
     async def _sync_work(
@@ -479,12 +490,17 @@ class SyncService:
     ) -> tuple[bool, set[int]]:
         cutoff = self.clock() - timedelta(days=self.settings.work_window_days)
 
-        async def fetch() -> list[WorkItem]:
+        async def fetch() -> tuple[list[WorkItem], bool]:
             items = await client.get_user_work(user_id, cutoff)
-            return [*items, *await self._epics(client, username, items, cutoff)]
+            epics = await self._epics(client, username, items, cutoff)
+            return [*items, *(epics or [])], epics is None
 
-        def write(session: Session, items: list[WorkItem], now: datetime) -> tuple[None, set[int]]:
-            store.replace_user_work(session, user_id, items, now)
+        def write(
+            session: Session, fetched: tuple[list[WorkItem], bool], now: datetime
+        ) -> tuple[None, set[int]]:
+            items, keep_epics = fetched
+            keep = frozenset({"epic"}) if keep_epics else frozenset()
+            store.replace_user_work(session, user_id, items, now, keep_kinds=keep)
             return None, {i.project_id for i in items if i.project_id is not None}
 
         return await self._category("work", user_id, run_id, fetch, write)

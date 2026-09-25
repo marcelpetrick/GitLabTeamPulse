@@ -20,7 +20,7 @@ The full per-commit history is `git log --oneline` (each subject ends with its v
 ### 0.2.9 – 0.2.10: documentation
 - [`docs/GRAPHQL.md`](docs/GRAPHQL.md): why and how GraphQL is used (timelogs, epics).
 
-### 0.2.11 – 0.2.16: second review round and architecture docs
+### 0.2.11 – 0.2.22: second and third review rounds, architecture and setup docs
 - GraphQL errors are classified: only schema, license and permission errors count as a missing
   capability. Transient errors fail the dataset and keep last-known-good data, and epics that
   worked before are never dropped silently.
@@ -29,6 +29,10 @@ The full per-commit history is `git log --oneline` (each subject ends with its v
 - Changelog version ranges corrected.
 - Dependabot for Python, GitHub Actions and the Docker base image.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): C4 architecture overview with Mermaid diagrams.
+- Health checks parse the migration head once; CLI `--host`/`--port` are validated; `SECURITY.md`.
+- README TL;DR setup (token creation, safe token entry, troubleshooting).
+- Epics that stop working mid-run keep their last known good state while issues and merge
+  requests keep refreshing; after the hourly recheck window they are marked unavailable.
 
 ## 0.1.x
 

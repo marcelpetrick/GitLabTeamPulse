@@ -294,8 +294,19 @@ def set_selected(session: Session, user_id: int, selected: bool, now: datetime) 
 # ---------------------------------------------------------------------- work items
 
 
-def replace_user_work(session: Session, user_id: int, items: list[WorkItem], now: datetime) -> None:
-    """Make ``items`` the complete current work snapshot for one user (all states)."""
+def replace_user_work(
+    session: Session,
+    user_id: int,
+    items: list[WorkItem],
+    now: datetime,
+    *,
+    keep_kinds: frozenset[str] = frozenset(),
+) -> None:
+    """Make ``items`` the complete current work snapshot for one user (all states).
+
+    Links to items of ``keep_kinds`` are left untouched: their last known good state is kept
+    when that kind could not be fetched this time.
+    """
     by_key: dict[tuple[str, int], WorkItem] = {(i.kind, i.gitlab_id): i for i in items}
     existing: dict[tuple[str, int], WorkItemRecord] = {}
     ids = {gitlab_id for _, gitlab_id in by_key}
@@ -329,7 +340,11 @@ def replace_user_work(session: Session, user_id: int, items: list[WorkItem], now
         record.draft = item.draft
         record.refreshed_at = now
     session.flush()
-    session.execute(delete(WorkItemAssignee).where(WorkItemAssignee.user_id == user_id))
+    stale_links = delete(WorkItemAssignee).where(WorkItemAssignee.user_id == user_id)
+    if keep_kinds:
+        kept = select(WorkItemRecord.id).where(WorkItemRecord.kind.in_(keep_kinds))
+        stale_links = stale_links.where(WorkItemAssignee.work_item_id.not_in(kept))
+    session.execute(stale_links)
     links = {(existing[(i.kind, i.gitlab_id)].id, i.relation) for i in items}
     session.add_all(
         WorkItemAssignee(work_item_id=wid, user_id=user_id, relation=rel, observed_at=now)

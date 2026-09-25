@@ -395,14 +395,28 @@ async def test_transient_graphql_error_keeps_last_known_good_epics(
         assert store.get_state(session, "work", ALEX).status == "error"
 
 
-async def test_epics_that_worked_before_are_not_dropped_on_capability_errors(
+async def test_epics_that_worked_before_are_kept_while_work_still_refreshes(
     service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI, clock: Clock
 ) -> None:
     await select_users(service, session_factory, ALEX)
     await service.sync_selected("scheduled")
     fake_app.state.epics_supported = False
+    issue = next(i for i in fake_app.state.data.issues if i["assignees"][0]["id"] == ALEX)
+    issue["title"] = "Renamed while epics fail"
     clock.advance(minutes=10)
-    await service.sync_selected("scheduled")
+    assert await service.sync_selected("scheduled") == "ok"
     with session_factory() as session:
-        assert count(session, WorkItemRecord, kind="epic") == 1
-        assert store.get_state(session, "work", ALEX).status == "error"
+        assert count(session, WorkItemRecord, kind="epic") == 1  # last known good epics kept
+        assert store.get_state(session, "work", ALEX).status == "ok"  # issues/MRs refreshed
+        titles = set(session.scalars(select(WorkItemRecord.title)))
+        assert "Renamed while epics fail" in titles
+    assert service.runtime.epics == "available"
+
+    clock.advance(hours=1)  # still failing after the recheck window: the capability is gone
+    await service.sync_selected("scheduled")
+    assert service.runtime.epics == "unavailable"
+    with session_factory() as session:
+        assert count(session, WorkItemRecord, kind="epic") == 0
+        assert any(
+            e.operation == "epics" for e in store.list_errors(session, include_resolved=False)
+        )
