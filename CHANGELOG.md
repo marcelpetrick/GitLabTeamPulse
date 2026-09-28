@@ -3,13 +3,22 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
-## Unreleased (feature branch `feature/contribution-graph`, planned as 0.3.0)
+## 0.3.0 (2026-09-28): contribution calendar
 
 - Contribution calendar per person for the last 12 months, computed from GitLab events with
   GitLab's contribution rule (the profile's `calendar.json` web route rejects API tokens).
 - 2D GitLab-style calendar grid and a rotatable, zoomable 3D skyline (dependency-free canvas).
 - New `contributions` dataset (backfill once, then incremental, refreshed at most hourly),
-  Alembic migration 0003 and `TEAMPULSE_CONTRIBUTIONS_REFRESH_MINUTES`.
+  Alembic migration 0003 and `TEAMPULSE_CONTRIBUTIONS_REFRESH_MINUTES`. The first sync
+  backfills a year per person (about 70 s for 6 people on a real instance).
+- Review fixes before release: the 3D view keeps its angle and zoom across refreshes; the
+  calendar pill no longer flickers to "stale" every hour; a failed backfill retries on the next
+  run; calendar errors show the right "last good data"; design uploads count; a truncated
+  backfill fails instead of storing zeros; a changed time zone triggers a full backfill; the
+  busiest day no longer shifts by a day west of UTC; 3D side walls hit-test correctly; keyboard
+  inspection of the 2D grid is announced to screen readers.
+- Demo: links open a page on the fake GitLab instead of a JSON 404. README: running with your
+  own env file.
 
 ## 0.2.x
 
