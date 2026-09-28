@@ -32,6 +32,9 @@ from gitlab_team_pulse.sync import RECENT_EVENTS, RuntimeState, contribution_gri
 
 CATEGORIES = ("push", "comment", "issue", "merge_request", "other")
 USER_DATASETS = ("work", "activity", "timelogs")
+# Datasets whose errors map to their own per-user state; the calendar has its own pill, so it
+# is not part of the combined per-user freshness above.
+ERROR_DATASETS = (*USER_DATASETS, "contributions")
 OPEN_STATES = {"opened", "open", "locked"}
 ACTIVITY_PREVIEW = 5
 
@@ -321,19 +324,27 @@ class DashboardReader:
             )
         ).all()
         size = (today - start).days + 1
+        per_user: dict[int, list[tuple[date, int]]] = {}
+        for uid, day, count in rows:
+            if day <= today:
+                per_user.setdefault(uid, []).append((day, count))
+        # A refresh only starts on the next selected run after the throttle expires.
+        interval = (
+            self.settings.contributions_refresh_minutes * 60
+            + self.settings.selected_refresh_interval_seconds
+        )
         result: dict[int, dict[str, Any]] = {}
         for user_id in user_ids:
             counts = [0] * size
-            for uid, day, count in rows:
-                if uid == user_id and day <= today:
-                    counts[(day - start).days] = count
+            for day, count in per_user.get(user_id, []):
+                counts[(day - start).days] = count
             busiest = max(range(size), key=lambda i: (counts[i], i)) if any(counts) else None
             state = states.get(store.state_key("contributions", user_id))
             freshness = _dataset_freshness(
                 state,
                 running="selected" in self.runtime.running
                 and (self.runtime.selected_scope is None or user_id in self.runtime.selected_scope),
-                interval=self.settings.contributions_refresh_minutes * 60,
+                interval=interval,
                 settings=self.settings,
                 now=self.now,
             )
@@ -476,7 +487,7 @@ def error_payloads(session: Session, *, limit: int, include_resolved: bool) -> l
     states = {s.key: s for s in session.scalars(select(SyncState))}
     payloads = []
     for record in records:
-        if record.user_id is not None and record.operation in USER_DATASETS:
+        if record.user_id is not None and record.operation in ERROR_DATASETS:
             key = store.state_key(record.operation, record.user_id)
         elif record.subsystem == "directory":
             key = "directory"

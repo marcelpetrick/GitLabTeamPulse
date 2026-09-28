@@ -41,7 +41,8 @@ def event(action: str, target: str | None = None, category: str = "other") -> Ac
         (event("accepted", "MergeRequest", "merge_request"), True),
         (event("approved", "MergeRequest", "merge_request"), True),
         (event("updated", "DesignManagement::Design"), False),
-        (event("created", "DesignManagement::Design"), True),
+        (event("uploaded", "DesignManagement::Design"), True),  # a created design
+        (event("revised", "DesignManagement::Design"), False),
         (event("joined"), False),
         (event("reopened", "Issue", "issue"), False),
         (event("closed", "Milestone"), False),
@@ -99,7 +100,40 @@ async def test_backfill_matches_gitlab_counting(
     with session_factory() as session:
         state = store.get_state(session, "contributions", ALEX)
         assert state.status == "ok"
-        assert state.cursor == clock.now.date().isoformat()
+        assert state.cursor == f"{clock.now.date().isoformat()}@UTC"
+
+
+async def test_changed_timezone_forces_a_full_backfill(
+    service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI, clock: Clock
+) -> None:
+    await select_alex(service, session_factory)
+    await service.sync_selected("scheduled")
+    service.settings = service.settings.model_copy(update={"timezone": "Europe/Berlin"})
+    clock.advance(hours=2)
+    fake_app.state.request_log.clear()
+    await service.sync_selected("scheduled")
+    start = service.contribution_window_start(clock.now)
+    backfill_after = (start - timedelta(days=2)).isoformat()
+    queries = [q for p, q in fake_app.state.request_log if p.endswith("/events")]
+    assert any(f"after={backfill_after}" in q for q in queries)
+    with session_factory() as session:
+        assert store.get_state(session, "contributions", ALEX).cursor.endswith("@Europe/Berlin")
+
+
+async def test_legacy_cursor_without_a_zone_stays_incremental(
+    service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI, clock: Clock
+) -> None:
+    await select_alex(service, session_factory)
+    await service.sync_selected("scheduled")
+    with session_factory() as session:
+        store.get_state(session, "contributions", ALEX).cursor = clock.now.date().isoformat()
+        session.commit()
+    clock.advance(hours=2)
+    fake_app.state.request_log.clear()
+    await service.sync_selected("scheduled")
+    incremental_after = (clock.now.date() - timedelta(days=3)).isoformat()
+    queries = [q for p, q in fake_app.state.request_log if p.endswith("/events")]
+    assert any(f"after={incremental_after}" in q for q in queries)
 
 
 async def test_refresh_is_throttled_then_incremental(
@@ -138,6 +172,57 @@ async def test_failed_refresh_keeps_the_calendar(
     assert stored(session_factory) == before
     with session_factory() as session:
         assert store.get_state(session, "contributions", ALEX).status == "error"
+
+
+async def test_failed_refresh_is_retried_on_the_next_run(
+    service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI, clock: Clock
+) -> None:
+    await select_alex(service, session_factory)
+    fake_app.state.down = True
+    await service.sync_selected("scheduled")
+    with session_factory() as session:
+        assert store.get_state(session, "contributions", ALEX).status == "error"
+    fake_app.state.down = False
+    clock.advance(minutes=10)  # well inside the hourly throttle
+    await service.sync_selected("scheduled")
+    with session_factory() as session:
+        assert store.get_state(session, "contributions", ALEX).status == "ok"
+    start = service.contribution_window_start(clock.now)
+    assert stored(session_factory) == expected_counts(fake_app, start)
+
+
+async def test_calendar_stays_fresh_until_the_next_run_after_the_throttle(
+    service: SyncService, session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    await select_alex(service, session_factory)
+    await service.sync_selected("scheduled")
+    # Due after 60 min, but the refresh only starts on the next selected run (every 10 min).
+    clock.advance(minutes=65)
+    with session_factory() as session:
+        reader = dashboard.DashboardReader(session, service.settings, service.runtime, clock.now)
+        card = reader.cards(store.selected_users(session))[0]
+    assert card["contributions"]["freshness"]["status"] == "fresh"
+
+
+async def test_calendar_errors_map_to_the_calendar_state(
+    service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI, clock: Clock
+) -> None:
+    await select_alex(service, session_factory)
+    await service.sync_selected("scheduled")
+    clock.advance(minutes=10)
+    await service.sync_selected("scheduled")  # the calendar is not due: only `selected` moves on
+    fake_app.state.down = True
+    clock.advance(hours=1)
+    await service.sync_selected("scheduled")
+    with session_factory() as session:
+        calendar_success = store.get_state(session, "contributions", ALEX).last_success_at
+        selected_success = store.get_state(session, "selected").last_success_at
+        payloads = dashboard.error_payloads(session, limit=50, include_resolved=False)
+    assert calendar_success != selected_success
+    errors = [p for p in payloads if p["operation"] == "contributions"]
+    assert errors
+    assert errors[0]["related_dataset"] == store.state_key("contributions", ALEX)
+    assert errors[0]["last_success_at"] == calendar_success
 
 
 async def test_days_follow_the_configured_timezone(

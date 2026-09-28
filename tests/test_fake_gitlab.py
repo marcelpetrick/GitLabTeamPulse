@@ -99,3 +99,79 @@ async def test_latency_control(http: httpx.AsyncClient, fake_app: FastAPI) -> No
     await http.post("/-/fake/latency", params={"seconds": 0.01})
     assert (await http.get("/api/v4/version")).status_code == 200
     assert (await http.get("/-/fake/state")).json()["latency"] == 0.01
+
+
+@pytest.fixture
+async def browser(fake_app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
+    """A client without the API token, like a browser following a demo link."""
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=fake_app), base_url="http://fake.gitlab"
+    ) as client:
+        yield client
+
+
+async def _page(client: httpx.AsyncClient, url: str, status: int = 200) -> str:
+    response = await client.get(url)
+    assert response.status_code == status
+    assert response.headers["content-type"].startswith("text/html")
+    assert "<title>" in response.text
+    assert "Fake GitLab (demo)" in response.text
+    assert "real GitLab instance" in response.text
+    return response.text
+
+
+async def test_web_pages_for_demo_links(
+    http: httpx.AsyncClient, browser: httpx.AsyncClient
+) -> None:
+    user = next(u for u in (await http.get("/api/v4/users")).json() if u["id"] == 2)
+    profile = await _page(browser, user["web_url"])
+    assert f"@{user['username']}" in profile
+    assert user["name"] in profile
+    project = (await http.get("/api/v4/projects/1")).json()
+    assert "<code>platform/api</code>" in await _page(browser, project["web_url"])
+    issue = (await http.get("/api/v4/issues")).json()[0]
+    issue_page = await _page(browser, issue["web_url"])
+    assert f"Issue <strong>#{issue['iid']}</strong>" in issue_page
+    mr = (await http.get("/api/v4/merge_requests")).json()[0]
+    mr_page = await _page(browser, mr["web_url"])
+    assert f"Merge request <strong>!{mr['iid']}</strong>" in mr_page
+    assert f"<code>{mr['references']['full'].split('!')[0]}</code>" in mr_page
+    epic = await _page(browser, "/groups/platform/-/epics/1")
+    assert "Q4 platform reliability" in epic
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/nobody.here",
+        "/platform/nope",
+        "/platform/api/-/issues/999999",
+        "/platform/api/-/merge_requests/999999",
+        "/platform/api/-/pipelines/1",
+        "/groups/platform/-/epics/99",
+        "/<script>alert(1)</script>",
+    ],
+)
+async def test_unknown_web_pages_are_html_404(browser: httpx.AsyncClient, path: str) -> None:
+    text = await _page(browser, path, status=404)
+    assert "<script>" not in text
+
+
+async def test_web_pages_do_not_touch_api_state(
+    http: httpx.AsyncClient, browser: httpx.AsyncClient, fake_app: FastAPI
+) -> None:
+    await http.post("/-/fake/outage", params={"down": "true"})
+    before, log = fake_app.state.requests, list(fake_app.state.request_log)
+    await _page(browser, "/platform/api")
+    await _page(browser, "/")
+    assert fake_app.state.requests == before
+    assert fake_app.state.request_log == log
+    assert (await http.get("/api/v4/version")).status_code == 503
+    await http.post("/-/fake/outage", params={"down": "false"})
+    # API routes and the control routes keep their JSON behaviour.
+    assert (await browser.get("/api/v4/version")).status_code == 401
+    unknown = await http.get("/api/v4/nonexistent")
+    assert unknown.status_code == 404
+    assert unknown.headers["content-type"].startswith("application/json")
+    assert (await http.get("/-/fake/state")).json()["down"] is False
+    assert (await browser.get("/-/fake/unknown")).status_code == 404

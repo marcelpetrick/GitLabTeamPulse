@@ -1,7 +1,29 @@
 # Feature: contribution graph (2D calendar and 3D skyline)
 
-Status: **implemented on `feature/contribution-graph`, in review**. It will be squash-merged into
-`master` after review, with a minor version bump (0.3.0).
+Status: **released in 0.3.0** (rebased onto `master` and fast-forwarded, tag `v0.3.0`).
+
+## Review follow-ups (2026-09-28)
+
+Found in the branch review, an independent deep review and a first run against production
+data. All were fixed before the release.
+
+| # | Area | Problem | Fix | Owner files |
+| --- | --- | --- | --- | --- |
+| 1 | UI | Every `data_version` bump re-renders the dashboard and recreates the 3D skyline, so rotation and zoom reset (and a drag in progress breaks) every refresh | Keep the view (`azimuth`, `elevation`, `zoom`) in the per-card UI state and pass it into `Skyline`; E2E proves it survives a refresh | `static/js/contributions.js`, `static/js/dashboard.js`, `tests/e2e/test_browser.py` |
+| 2 | Freshness | The calendar pill turns "Stale" for up to ~8 min every hour: it's due after 60 min but only starts on the next selected run (+10 min), while stale = 60 min + 2 min grace | Freshness interval = refresh minutes + the selected refresh interval | `dashboard.py`, `tests/test_contributions.py` |
+| 3 | Sync | A failed backfill leaves the calendar empty for an hour: the throttle keys on the last *attempt* | Due again on the next run when the last attempt failed | `sync.py`, `tests/test_contributions.py` |
+| 4 | Diagnostics | Contribution errors map to the global `selected` state, so "last good data" is wrong | Map `contributions` errors to their own dataset state | `dashboard.py`, `tests/test_contributions.py` |
+| 5 | Performance | Calendar payload scans all rows once per user on every dashboard poll | Group rows by user once | `dashboard.py` |
+| 6 | Demo | Links in the demo open a bare JSON 404 on the fake GitLab | The fake GitLab answers its own web URLs (profiles, projects, issues, MRs) with a small HTML page naming the target, so demo links land on the server in use | `fake_gitlab.py`, `tests/test_fake_gitlab.py` |
+| 7 | Tooling | `make lint` fails when `.claude/` is unreadable | Exclude `.claude` in the Ruff config | `pyproject.toml` |
+| 8 | Docs | No hint how to run with your own env file; the first-sync backfill duration is undocumented | README: `.env` / `uv run --env-file`, a note that the first sync backfills a year (~70 s for 6 users on production) and that the demo occupies port 8000 | `README.md` |
+| 9 | Release | Version still 0.2.22, changelog "Unreleased" | Bump to 0.3.0, finalize the changelog, rebase onto `master`, fast-forward, tag `v0.3.0` | `__init__.py`, `CHANGELOG.md` |
+| 10 | UI | "Busiest day" shows the previous day west of UTC (bare date parsed as UTC, printed local) | Format the date zone-free, like the grid | `static/js/dashboard.js` |
+| 11 | Rule | Design uploads never counted: the API reports a created design as "uploaded" | Accept "uploaded" | `gitlab/models.py` |
+| 12 | UI | Hovering a 3D building's side wall shows the day behind it | Hit-test visible side faces too | `static/js/contributions.js` |
+| 13 | A11y | Arrow-key inspection of the 2D grid is silent for screen readers | Announce the active day in an `aria-live` region | `static/js/contributions.js` |
+| 14 | Sync | Hitting the page cap stored an incomplete backfill as zeros and reported success | `paginate(complete=True)` raises; the dataset fails and keeps last-known-good | `gitlab/client.py`, `sync.py` |
+| 15 | Sync | A changed `TEAMPULSE_TIMEZONE` left older days bucketed in the old zone | The cursor records its zone (`date@zone`); a different zone forces a full backfill | `sync.py` |
 
 ## Goal
 

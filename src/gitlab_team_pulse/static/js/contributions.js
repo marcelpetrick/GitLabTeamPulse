@@ -43,12 +43,18 @@ export function cells(calendar) {
   });
 }
 
+/** "2026-09-22" as the same zone-free day text the grid uses (no shift west of UTC). */
+export function formatDay(iso) {
+  return dayText(parseDay(iso));
+}
+
 function tooltipFor(cell) {
   return [h("div", { class: "t-title" }, dayText(cell.date)), h("div", {}, plural(cell.count, "contribution"))];
 }
 
 // ------------------------------------------------------------------ 2D heatmap
 
+/** The heatmap SVG in its scroll wrapper, with a live region announcing the inspected day. */
 export function heatmap(calendar) {
   const grid = cells(calendar);
   const weeks = grid.length ? grid[grid.length - 1].week + 1 : 0;
@@ -79,12 +85,14 @@ export function heatmap(calendar) {
     svg.append(rect);
     return rect;
   });
+  const live = h("div", { class: "visually-hidden heatmap-live", "aria-live": "polite" });
   // Keyboard: arrows move a highlighted day (roving focus without 371 tab stops).
   let active = grid.length - 1;
   const highlight = () => {
     rects.forEach((rect, index) => rect.classList.toggle("is-active", index === active));
     const box = rects[active].getBoundingClientRect();
     showTooltip(tooltipFor(grid[active]), box.left + box.width / 2, box.top);
+    live.textContent = `${dayText(grid[active].date)}: ${plural(grid[active].count, "contribution")}`;
   };
   svg.addEventListener("focus", () => grid.length && highlight());
   svg.addEventListener("blur", () => { rects.forEach((rect) => rect.classList.remove("is-active")); hideTooltip(); });
@@ -95,7 +103,7 @@ export function heatmap(calendar) {
     active = Math.min(grid.length - 1, Math.max(0, active + moves[event.key]));
     highlight();
   });
-  return svg;
+  return h("div", { class: "heatmap-scroll" }, svg, live);
 }
 
 export function legend() {
@@ -106,6 +114,15 @@ export function legend() {
 // ------------------------------------------------------------------ 3D skyline
 
 const DEFAULT_VIEW = { azimuth: -0.34, elevation: 1.02, zoom: 1 };
+
+/** A fresh view object; callers keep it so a re-rendered skyline continues from the same angle. */
+export function defaultView() {
+  return { ...DEFAULT_VIEW };
+}
+
+// The pointer currently dragging a skyline, keyed by its view object, so a skyline re-created
+// mid-drag (dashboard re-render) can take the drag over from the detached canvas.
+let activeDrag = null;
 
 function css(name, fallback) {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -133,13 +150,16 @@ function pointInPolygon(x, y, points) {
 /**
  * Orthographic projection of axis-aligned boxes on a grid, drawn back to front (painter's
  * algorithm). Rotation is around the vertical axis, tilt changes the viewing elevation.
+ * `view` ({azimuth, elevation, zoom}) is mutated in place, so passing the same object to a
+ * new Skyline keeps the user's rotation and zoom across re-renders.
  */
 export class Skyline {
-  constructor(calendar) {
+  constructor(calendar, view = defaultView()) {
     this.grid = cells(calendar);
     this.max = Math.max(1, calendar.max || 0);
     this.weeks = this.grid.length ? this.grid[this.grid.length - 1].week + 1 : 0;
-    this.view = { ...DEFAULT_VIEW };
+    this.view = view;
+    this.tooltipShown = false;
     this.faces = [];
     this.pointers = new Map();
     this.canvas = h("canvas", {
@@ -151,12 +171,35 @@ export class Skyline {
       h("div", { class: "skyline-controls" },
         h("span", { class: "muted" }, "Drag to rotate · wheel or pinch to zoom · arrow keys, + / −, 0"), this.resetButton));
     this.bind();
-    if ("ResizeObserver" in window) new ResizeObserver(() => this.draw()).observe(this.canvas);
+    if ("ResizeObserver" in window) {
+      const observer = new ResizeObserver(() => {
+        if (this.canvas.isConnected) {
+          this.draw();
+          return;
+        }
+        // Removed by a re-render: stop observing and drop a tooltip this canvas showed.
+        observer.disconnect();
+        this.pointers.clear();
+        this.hideTip();
+      });
+      observer.observe(this.canvas);
+    }
     requestAnimationFrame(() => this.draw());
   }
 
+  showTip(cell, x, y) {
+    this.tooltipShown = true;
+    showTooltip(tooltipFor(cell), x, y);
+  }
+
+  hideTip() {
+    if (!this.tooltipShown) return;
+    this.tooltipShown = false;
+    hideTooltip();
+  }
+
   reset() {
-    this.view = { ...DEFAULT_VIEW };
+    Object.assign(this.view, DEFAULT_VIEW);
     this.draw();
   }
 
@@ -173,14 +216,30 @@ export class Skyline {
 
   bind() {
     const c = this.canvas;
+    const capture = (pointerId) => {
+      try {
+        c.setPointerCapture(pointerId);
+      } catch {
+        // Pointer no longer active or canvas detached: the drag simply continues uncaptured.
+      }
+    };
     c.addEventListener("pointerdown", (event) => {
-      c.setPointerCapture(event.pointerId);
+      capture(event.pointerId);
       this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
-      hideTooltip();
+      activeDrag = { view: this.view, pointerId: event.pointerId };
+      this.hideTip();
     });
     c.addEventListener("pointermove", (event) => {
       const previous = this.pointers.get(event.pointerId);
       if (!previous) {
+        const adopt = activeDrag && activeDrag.view === this.view && activeDrag.pointerId === event.pointerId;
+        if (adopt && event.buttons) {
+          // This skyline replaced the one the drag started on: continue the drag here.
+          capture(event.pointerId);
+          this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          return;
+        }
+        if (adopt) activeDrag = null;
         this.hover(event);
         return;
       }
@@ -196,10 +255,13 @@ export class Skyline {
       this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
       this.rotate((event.clientX - previous.x) * 0.01, (event.clientY - previous.y) * 0.006);
     });
-    const release = (event) => this.pointers.delete(event.pointerId);
+    const release = (event) => {
+      this.pointers.delete(event.pointerId);
+      if (activeDrag && activeDrag.pointerId === event.pointerId) activeDrag = null;
+    };
     c.addEventListener("pointerup", release);
     c.addEventListener("pointercancel", release);
-    c.addEventListener("pointerleave", hideTooltip);
+    c.addEventListener("pointerleave", () => this.hideTip());
     c.addEventListener("wheel", (event) => {
       event.preventDefault();
       this.zoomBy(Math.exp(-event.deltaY * 0.0015));
@@ -223,11 +285,11 @@ export class Skyline {
     const y = event.clientY - rect.top;
     for (let i = this.faces.length - 1; i >= 0; i--) {
       if (pointInPolygon(x, y, this.faces[i].points)) {
-        showTooltip(tooltipFor(this.faces[i].cell), event.clientX, event.clientY);
+        this.showTip(this.faces[i].cell, event.clientX, event.clientY);
         return;
       }
     }
-    hideTooltip();
+    this.hideTip();
   }
 
   draw() {
@@ -320,6 +382,7 @@ export class Skyline {
         quad.forEach(([px, py], i) => (i ? ctx.lineTo(px, py) : ctx.moveTo(px, py)));
         ctx.closePath();
         ctx.fill();
+        this.faces.push({ cell: box.cell, points: quad });
       }
       const top = [[-half, -half], [half, -half], [half, half], [-half, half]].map(([dx, dy]) => project(box.x + dx, box.y + dy, box.z));
       ctx.fillStyle = base;

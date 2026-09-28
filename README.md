@@ -106,6 +106,8 @@ uv run gitlab-team-pulse serve    # open http://127.0.0.1:8000
 
 3. In the browser: **People** → tick the colleagues to follow → **Dashboard**. The first sync
    starts right away; after that it refreshes every 10 minutes or on **Refresh now**.
+   The first sync with the contribution calendar backfills a year of events per person (about
+   70 s for 6 people on a real instance); later refreshes are incremental.
 
 **Details**
 
@@ -151,8 +153,9 @@ Images are published to `ghcr.io/marcelpetrick/gitlabteampulse` for `linux/amd64
 
 ### Configuration
 
-All settings are environment variables (an ignored `.env` file works too). None of them
-require a code change.
+All settings are environment variables. None of them require a code change.
+`make run` / `gitlab-team-pulse serve` also reads an ignored `.env` file from the working
+directory; for another file use `uv run --env-file path/to/file.env gitlab-team-pulse serve`.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -223,9 +226,12 @@ make install     # uv sync --locked
 make test        # unit + integration tests, coverage gate 95%
 make e2e         # Playwright/Chromium browser tests against real HTTP servers
 make lint typecheck format
+make run         # serve against your GitLab (reads .env from the working directory)
 make demo        # run against the fake GitLab
 ./localPipeline.sh   # everything CI runs, plus a Docker smoke test and an optional demo launch
 ```
+
+`make demo` and `make run` both bind port 8000, so stop the demo before `make run`.
 
 `localPipeline.sh` runs these stages: uv sync, Ruff lint, Ruff format check, strict mypy, a
 migration of a fresh database, tests with coverage, browser E2E, package build, and a wheel

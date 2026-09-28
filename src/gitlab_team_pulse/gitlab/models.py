@@ -375,7 +375,8 @@ def parse_epic(payload: dict[str, Any]) -> WorkItem:
 
 
 CONTRIBUTION_TARGETS = {"Issue", "WorkItem", "MergeRequest", "DesignManagement::Design"}
-CONTRIBUTION_ACTIONS = {"opened", "created", "closed", "accepted", "merged", "approved"}
+# API spellings of created/closed/merged/approved; a created design is reported as "uploaded".
+CONTRIBUTION_ACTIONS = {"opened", "created", "uploaded", "closed", "accepted", "merged", "approved"}
 
 
 def counts_as_contribution(event: ActivityEvent) -> bool:

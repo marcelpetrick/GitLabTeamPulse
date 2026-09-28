@@ -2,19 +2,22 @@
 
 It implements just the endpoints Team Pulse uses, with deterministic data relative to the
 moment it was created. Control endpoints under ``/-/fake/`` simulate outages and new activity.
+Every other GET path is one of its own web URLs (profile, project, issue, merge request, epic)
+and answers with a small HTML page naming the target, so demo links don't end in a JSON 404.
 It is never used when a real ``TEAMPULSE_GITLAB_URL`` is configured.
 """
 
 from __future__ import annotations
 
 import asyncio
+import html
 import random
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 FAKE_TOKEN = "fake-token"  # noqa: S105 - public demo credential for the fake server only
 
@@ -330,6 +333,91 @@ def _parse_time(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value.replace(" ", "+"))
 
 
+def _is_api_path(path: str) -> bool:
+    return path == "/api" or path.startswith(("/api/", "/-/fake"))
+
+
+def _web_html(title: str, body: str, status_code: int = 200) -> HTMLResponse:
+    """A tiny self-contained page; ``title`` and ``body`` must already be escaped."""
+    page = (
+        '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>{title} · Fake GitLab (demo)</title>"
+        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:3rem auto;"
+        "padding:0 1rem;color:#1f1f1f;background:#fafafa}"
+        "@media (prefers-color-scheme:dark){body{color:#ececec;background:#18171d}}"
+        "p.note{opacity:.75}</style></head><body>"
+        "<h1>Fake GitLab (demo)</h1>"
+        f"<p>{body}</p>"
+        '<p class="note">This is the built-in fake GitLab behind '
+        "<code>gitlab-team-pulse demo</code>. On a real GitLab instance this link opens "
+        "the real page.</p>"
+        "</body></html>\n"
+    )
+    return HTMLResponse(page, status_code=status_code)
+
+
+def web_page(data: FakeData, path: str) -> HTMLResponse:
+    """Answer one of the fake's own web URLs, resolved against ``data`` where possible."""
+    parts = [part for part in path.split("/") if part]
+    esc = html.escape
+
+    def missing() -> HTMLResponse:
+        return _web_html(
+            "Not found", f"Nothing is known at <code>/{esc('/'.join(parts))}</code>.", 404
+        )
+
+    if not parts:
+        return _web_html("Home", "The dashboard links to people, projects and work items here.")
+    if len(parts) == 1:
+        user = next((u for u in data.users if u["username"] == parts[0]), None)
+        if user is None:
+            return missing()
+        name, username = esc(user["name"]), esc(user["username"])
+        return _web_html(f"@{username}", f"User profile of <strong>{name}</strong> (@{username}).")
+    if len(parts) == 5 and parts[0] == "groups" and parts[2:4] == ["-", "epics"]:
+        epic = next(
+            (e for e in data.epics if e["group"] == parts[1] and str(e["iid"]) == parts[4]), None
+        )
+        if epic is None:
+            return missing()
+        return _web_html(
+            f"Epic &amp;{esc(parts[4])}",
+            f"Epic <strong>&amp;{esc(parts[4])}</strong> ({esc(epic['title'])}) in group "
+            f"<code>{esc(parts[1])}</code>.",
+        )
+    full_path = "/".join(parts[:2])
+    project = next(
+        (p for p in data.projects.values() if p["path_with_namespace"] == full_path), None
+    )
+    if project is None:
+        return missing()
+    if len(parts) == 2:
+        return _web_html(
+            esc(full_path),
+            f"Project <strong>{esc(project['name'])}</strong> (<code>{esc(full_path)}</code>).",
+        )
+    kinds = {
+        "issues": ("Issue", "#", data.issues),
+        "merge_requests": ("Merge request", "!", data.merge_requests),
+    }
+    if len(parts) == 5 and parts[2] == "-" and parts[3] in kinds:
+        label, sigil, items = kinds[parts[3]]
+        item = next(
+            (i for i in items if i["project_id"] == project["id"] and str(i["iid"]) == parts[4]),
+            None,
+        )
+        if item is None:
+            return missing()
+        ref = f"{sigil}{esc(parts[4])}"
+        return _web_html(
+            f"{label} {ref}",
+            f"{label} <strong>{ref}</strong> ({esc(item['title'])}) in project "
+            f"<code>{esc(full_path)}</code>.",
+        )
+    return missing()
+
+
 def create_fake_gitlab(
     data: FakeData | None = None, *, token: str = FAKE_TOKEN, admin: bool = True
 ) -> FastAPI:
@@ -368,6 +456,10 @@ def create_fake_gitlab(
 
     @app.middleware("http")
     async def gate(request: Request, call_next: Any) -> Response:
+        # Web pages are what a browser opens from a demo link: no token, not counted as API
+        # load, and still reachable during a simulated outage.
+        if request.method in ("GET", "HEAD") and not _is_api_path(request.url.path):
+            return web_page(app.state.data, request.url.path)
         if request.url.path.startswith("/-/fake"):
             return await call_next(request)  # type: ignore[no-any-return]
         app.state.requests += 1

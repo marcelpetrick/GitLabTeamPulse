@@ -2,7 +2,7 @@
 
 import { api } from "./api.js";
 import { activityChart, timeChart } from "./charts.js";
-import { Skyline, heatmap, legend } from "./contributions.js";
+import { Skyline, defaultView, formatDay, heatmap, legend } from "./contributions.js";
 import { clear, h, icon, s, safeLink } from "./dom.js";
 import { exactTime, formatDate, formatDuration, plural, todayIso } from "./format.js";
 import { avatar, freshnessPill, rel, toast } from "./ui.js";
@@ -48,13 +48,13 @@ export class DashboardView {
   constructor(root, app) {
     this.root = root;
     this.app = app;
-    this.cardState = new Map(); // per user: sort, state filter, expansion flags
+    this.cardState = new Map(); // per user: sort, state filter, expansion flags, calendar view and 3D angle
     this.refreshing = false;
   }
 
   uiState(userId) {
     if (!this.cardState.has(userId)) {
-      this.cardState.set(userId, { sort: "updated_desc", filter: "all", allActivity: false, allWork: false, entries: false, calendar: "2d" });
+      this.cardState.set(userId, { sort: "updated_desc", filter: "all", allActivity: false, allWork: false, entries: false, calendar: "2d", skylineView: defaultView() });
     }
     return this.cardState.get(userId);
   }
@@ -282,10 +282,10 @@ export class DashboardView {
     const render = () => {
       clear(body);
       if (state.calendar === "3d") {
-        const skyline = new Skyline(calendar);
+        const skyline = new Skyline(calendar, state.skylineView);
         body.append(skyline.element);
       } else {
-        body.append(h("div", { class: "heatmap-scroll" }, heatmap(calendar)), legend());
+        body.append(heatmap(calendar), legend());
       }
     };
     const toggle = h("div", { class: "chip-group small", role: "group", "aria-label": "Contribution view" },
@@ -299,7 +299,7 @@ export class DashboardView {
           },
         }, label)));
     const busiest = calendar.busiest
-      ? ` · busiest day ${formatDate(calendar.busiest.date)} (${calendar.busiest.count})`
+      ? ` · busiest day ${formatDay(calendar.busiest.date)} (${calendar.busiest.count})`
       : "";
     section.append(
       h("div", { class: "panel-head" },

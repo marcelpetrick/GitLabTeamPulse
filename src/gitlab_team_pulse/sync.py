@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from gitlab_team_pulse import retention, store
 from gitlab_team_pulse.config import Settings
+from gitlab_team_pulse.freshness import FAILED_STATUSES
 from gitlab_team_pulse.gitlab.client import GitLabClient
 from gitlab_team_pulse.gitlab.errors import GitLabCapabilityError, GitLabError
 from gitlab_team_pulse.gitlab.models import (
@@ -576,10 +577,14 @@ class SyncService:
         return contribution_grid_start(now.astimezone(self.settings.tz).date())
 
     def contributions_due(self, user_id: int, now: datetime) -> bool:
-        """The calendar changes slowly: refresh at most every N minutes, not every run."""
+        """The calendar changes slowly: refresh at most every N minutes, not every run.
+
+        A failed attempt is retried on the next run, so a failed backfill does not leave the
+        calendar empty for a whole interval.
+        """
         with self.session_factory() as session:
             state = store.find_state(session, "contributions", user_id)
-            if state is None or state.last_attempt_at is None:
+            if state is None or state.last_attempt_at is None or state.status in FAILED_STATUSES:
                 return True
             interval = timedelta(minutes=self.settings.contributions_refresh_minutes)
             return now >= state.last_attempt_at + interval
@@ -590,21 +595,28 @@ class SyncService:
         """Daily contribution counts, computed from events with GitLab's calendar rule.
 
         The first sync backfills the whole grid; later syncs recount only from the last
-        counted day (the previous day is included to absorb late-arriving events).
+        counted day (the previous day is included to absorb late-arriving events). The cursor
+        records the time zone the days were bucketed in; a changed zone forces a full backfill.
         """
         now = self.clock()
         start = self.contribution_window_start(now)
+        zone = self.settings.timezone
         with self.session_factory() as session:
             state = store.find_state(session, "contributions", user_id)
             cursor = state.cursor if state and state.last_success_at else None
-        from_day = (
-            start if cursor is None else max(start, date.fromisoformat(cursor) - timedelta(days=1))
-        )
+        from_day = start
+        if cursor is not None:
+            last_day, _, cursor_zone = cursor.partition("@")
+            if not cursor_zone or cursor_zone == zone:
+                from_day = max(start, date.fromisoformat(last_day) - timedelta(days=1))
         tz = self.settings.tz
 
         async def fetch() -> list[ActivityEvent]:
             # GitLab's `after` is an exclusive UTC date: step back two days to cover time zones.
-            return await client.get_user_recent_activity(user_id, from_day - timedelta(days=2))
+            # A truncated backfill must fail rather than store the missing oldest days as zero.
+            return await client.get_user_recent_activity(
+                user_id, from_day - timedelta(days=2), complete=True
+            )
 
         def write(
             session: Session, events: list[ActivityEvent], stamp: datetime
@@ -615,7 +627,7 @@ class SyncService:
                 if day >= from_day and counts_as_contribution(event):
                     counts[day] = counts.get(day, 0) + 1
             store.replace_contribution_days(session, user_id, counts, from_day)
-            return stamp.astimezone(tz).date().isoformat(), set()
+            return f"{stamp.astimezone(tz).date().isoformat()}@{zone}", set()
 
         return await self._category("contributions", user_id, run_id, fetch, write)
 

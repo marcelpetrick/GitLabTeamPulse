@@ -244,9 +244,17 @@ class GitLabClient:
         return self._json(await self._request("GET", path, params=params), path)
 
     async def paginate(
-        self, path: str, params: dict[str, Any] | None = None, *, limit: int | None = None
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        *,
+        limit: int | None = None,
+        complete: bool = False,
     ) -> list[dict[str, Any]]:
-        """Follow ``Link: rel=next`` (keyset or offset) or ``X-Next-Page`` headers."""
+        """Follow ``Link: rel=next`` (keyset or offset) or ``X-Next-Page`` headers.
+
+        With ``complete``, hitting the page cap raises instead of returning a partial list.
+        """
         query: dict[str, Any] | None = {"per_page": PER_PAGE, **(params or {})}
         url = path
         items: list[dict[str, Any]] = []
@@ -269,6 +277,8 @@ class GitLabClient:
                 query = {**query, "page": next_page}
                 continue
             return items
+        if complete:
+            raise GitLabResponseError(f"{path}: more than {self._max_pages} pages")
         log.warning("%s: stopped after %d pages", path, self._max_pages)
         return items
 
@@ -341,7 +351,12 @@ class GitLabClient:
         return [*issues, *assigned_mrs, *review_mrs]
 
     async def get_user_recent_activity(
-        self, user_id: int, after: date | None = None, *, limit: int | None = None
+        self,
+        user_id: int,
+        after: date | None = None,
+        *,
+        limit: int | None = None,
+        complete: bool = False,
     ) -> list[ActivityEvent]:
         """Events strictly after ``after`` (GitLab date granularity), newest first."""
         params: dict[str, Any] = {"sort": "desc"}
@@ -349,7 +364,9 @@ class GitLabClient:
             params["after"] = after.isoformat()
         if limit is not None:
             params["per_page"] = min(limit, PER_PAGE)
-        pages = await self.paginate(f"users/{user_id}/events", params, limit=limit)
+        pages = await self.paginate(
+            f"users/{user_id}/events", params, limit=limit, complete=complete
+        )
         return [guarded("event", parse_event, item) for item in pages]
 
     async def get_user_timelogs(

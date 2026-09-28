@@ -166,8 +166,13 @@ def test_contribution_calendar_2d_and_3d(page: Page, stack: LiveStack) -> None:
     busy.first.hover()
     expect(page.locator("#tooltip")).to_contain_text("contribution")
     section.locator("svg.heatmap").focus()
+    live = section.locator(".heatmap-live[aria-live=polite]")
+    expect(live).to_contain_text("contribution")
+    latest = live.text_content()
     page.keyboard.press("ArrowLeft")
     expect(section.locator("rect.heat-cell.is-active")).to_have_count(1)
+    expect(live).not_to_have_text(latest or "")
+    expect(live).to_contain_text("contribution")
 
     section.get_by_role("button", name="3D skyline").click()
     canvas = section.locator("canvas.skyline-canvas")
@@ -190,11 +195,17 @@ def test_contribution_calendar_2d_and_3d(page: Page, stack: LiveStack) -> None:
     assert zoomed != rotated
     canvas.focus()
     page.keyboard.press("ArrowRight")
-    assert canvas.evaluate(snapshot) != zoomed
-    section.get_by_role("button", name="Reset view").click()
-    assert canvas.evaluate(snapshot) == initial
+    turned = canvas.evaluate(snapshot)
+    assert turned != zoomed
 
-    # The chosen view survives the periodic re-render of the dashboard.
+    # The rotation and zoom survive the re-render a refresh triggers (a new canvas element).
+    canvas.evaluate("el => { el.dataset.beforeRefresh = '1'; }")
     page.click("#refresh-now")
     expect(page.locator("#refresh-now")).to_contain_text("Refresh now", timeout=30000)
-    expect(section.locator("canvas.skyline-canvas")).to_be_visible()
+    expect(section.locator("canvas.skyline-canvas:not([data-before-refresh])")).to_be_visible()
+    canvas = section.locator("canvas.skyline-canvas")
+    page.wait_for_timeout(300)  # the first draw runs on requestAnimationFrame
+    assert canvas.evaluate(snapshot) == turned
+
+    section.get_by_role("button", name="Reset view").click()
+    assert canvas.evaluate(snapshot) == initial

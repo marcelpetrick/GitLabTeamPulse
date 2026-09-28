@@ -105,6 +105,15 @@ async def test_pagination_stops_at_max_pages(client: GitLabClient) -> None:
 
 
 @respx.mock
+async def test_complete_pagination_fails_at_max_pages(client: GitLabClient) -> None:
+    respx.get(f"{API}/users/7/events").mock(
+        side_effect=lambda r: httpx.Response(200, json=[], headers={"X-Next-Page": "2"})
+    )
+    with pytest.raises(GitLabResponseError, match="more than 5 pages"):
+        await client.get_user_recent_activity(7, complete=True)
+
+
+@respx.mock
 async def test_pagination_refuses_foreign_host(client: GitLabClient) -> None:
     respx.get(f"{API}/users").mock(
         return_value=httpx.Response(
