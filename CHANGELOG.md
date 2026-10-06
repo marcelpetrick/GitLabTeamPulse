@@ -3,6 +3,14 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.3.1 (2026-10-06): dependency update
+
+- Dependencies on the latest stable releases: fastapi 0.142.2, SQLAlchemy 2.1.3, uvicorn
+  0.54.0, mypy 2.4.0, ruff 0.16.10, uv 0.12.23 (Docker image, GitHub Actions, GitLab CI).
+  Supersedes Dependabot PRs #1 and #2.
+- The contribution calendar E2E test waits for the backfill instead of counting cells once
+  (failed on slower CI runners).
+
 ## 0.3.0 (2026-09-28): contribution calendar
 
 - Contribution calendar per person for the last 12 months, computed from GitLab events with
