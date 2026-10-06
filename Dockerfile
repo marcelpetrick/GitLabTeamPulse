@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # GitLab Team Pulse: one Python process, one SQLite database on a persistent volume.
 
-FROM ghcr.io/astral-sh/uv:0.12.18 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.23 AS uv
 
 FROM python:3.14-slim AS build
 COPY --from=uv /uv /usr/local/bin/uv

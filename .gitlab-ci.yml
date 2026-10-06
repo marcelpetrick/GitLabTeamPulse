@@ -15,7 +15,7 @@ verify:
     paths: [.uv-cache, .playwright]
   before_script:
     - apt-get update -qq && apt-get install -y -qq curl git >/dev/null
-    - pip install --quiet uv==0.12.18
+    - pip install --quiet uv==0.12.23
   script:
     - ./localPipeline.sh --noRun --noDocker --report-dir pipeline-reports
   artifacts:
