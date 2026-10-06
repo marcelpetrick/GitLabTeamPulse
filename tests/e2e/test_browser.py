@@ -162,7 +162,8 @@ def test_contribution_calendar_2d_and_3d(page: Page, stack: LiveStack) -> None:
     expect(cells.first).to_be_visible()
     assert 52 * 7 < cells.count() <= 53 * 7
     busy = section.locator("rect.heat-cell:not(.lvl-0)")
-    assert busy.count() > 50  # a year of history, not only the last week
+    # Waits: the grid can render empty before the contribution backfill lands.
+    expect(busy.nth(50)).to_be_attached()  # a year of history, not only the last week
     busy.first.hover()
     expect(page.locator("#tooltip")).to_contain_text("contribution")
     section.locator("svg.heatmap").focus()
