@@ -39,6 +39,8 @@ class Scheduler:
         self._last_cleanup: datetime | None = None
         self._first_tick = True
         self.next_selected_due: datetime | None = None
+        # Users of the selected job this scheduler started; None means everyone (a full run).
+        self._selected_scope: frozenset[int] | None = None
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -73,8 +75,12 @@ class Scheduler:
     def request_refresh(self) -> RefreshResult:
         """Manual "Refresh now": start, coalesce into a running refresh, or throttle storms."""
         now = self.service.clock()
-        if self.is_running("selected") or self._manual_pending:
+        if self._manual_pending:
             return RefreshResult(True, "coalesced")
+        if self.is_running("selected") and self._selected_scope is None:
+            return RefreshResult(True, "coalesced")  # a full refresh is already running
+        # A running run for a few newly selected people does not cover everyone: queue the full
+        # refresh behind it instead of silently dropping it.
         minimum = self.settings.manual_refresh_min_interval_seconds
         if self._last_manual is not None:
             elapsed = (now - self._last_manual).total_seconds()
@@ -129,13 +135,16 @@ class Scheduler:
             if self._manual_pending:
                 self._manual_pending = False
                 self._pending_users.clear()
+                self._selected_scope = None
                 self._spawn("selected", lambda: self.service.sync_selected("manual"))
             elif self.service.selected_due(now):
                 self._pending_users.clear()
+                self._selected_scope = None
                 self._spawn("selected", lambda: self.service.sync_selected(trigger))
             elif self._pending_users:
                 users = sorted(self._pending_users)
                 self._pending_users.clear()
+                self._selected_scope = frozenset(users)
                 self._spawn("selected", lambda: self.service.sync_selected("selection", users))
         self.next_selected_due = self.service.selected_next_due(now)
 

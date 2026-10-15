@@ -167,3 +167,38 @@ def test_record_problem_survives_database_errors(
     monkeypatch.setattr(store, "record_error", broken)
     service.record_problem("scheduler", "x", "boom")
     assert "could not persist diagnostic" in caplog.text
+
+
+async def test_refresh_during_a_single_user_run_is_queued_not_dropped(
+    service: SyncService, session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    await service.sync_directory("startup")
+    with session_factory() as session:
+        for uid in (2, 3):
+            store.set_selected(session, uid, True, clock.now)
+        session.commit()
+    scheduler = Scheduler(service)
+    await scheduler.tick()  # startup: full run
+    await scheduler.wait_idle()
+    clock.advance(minutes=1)
+    scheduler.request_user_sync(3)  # a newly selected person: a run for that person only
+    await scheduler.tick()
+    assert scheduler.is_running("selected")  # the single-user job, not yet even started
+    result = scheduler.request_refresh()
+    assert (result.accepted, result.status) == (True, "started")
+    assert scheduler.refresh_pending
+    await scheduler.wait_idle()
+    await scheduler.tick()  # the queued full refresh starts after the single-user run
+    await scheduler.wait_idle()
+    with session_factory() as session:
+        run = store.latest_run(session, "selected")
+        assert run is not None
+        assert run.trigger == "manual"
+        assert run.users_attempted == 2
+    # During a full run a refresh joins it.
+    clock.advance(seconds=30)
+    scheduler.request_refresh()
+    await scheduler.tick()
+    assert scheduler.is_running("selected")
+    assert scheduler.request_refresh().status == "coalesced"
+    await scheduler.wait_idle()
