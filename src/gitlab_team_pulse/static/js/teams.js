@@ -145,9 +145,11 @@ export class TeamsView {
     const key = `${team.id}:${this.period}:${this.offset}:${this.app.dataVersion}:${team.updated_at}`;
     if (!force && key === this.reportKey && this.report) return;
     this.loading = true;
+    const { period, offset } = this;
     try {
-      const report = await api.teamReport(team.id, this.period, this.offset);
-      if (this.team?.id !== team.id) return;
+      const report = await api.teamReport(team.id, period, offset);
+      // A slower, older answer must not overwrite the report for what is selected now.
+      if (this.team?.id !== team.id || this.period !== period || this.offset !== offset) return;
       this.report = report;
       this.reportKey = key;
     } catch (error) {
