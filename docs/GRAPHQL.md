@@ -67,8 +67,14 @@ Team Pulse does **not** scan every group. It derives the top-level groups from t
 already-fetched issues and merge requests, and it queries only those (subgroups are
 included through `includeDescendants`).
 
-**Efficiency:** at most one request per top-level group the user actually works in,
-filtered on the server by assignee and update time.
+Two small queries run per top-level group: the epics updated inside the work window
+(`updatedAfter`), and the **open** ones however old (`state: opened`), so stalled epics stay
+visible like stalled issues and MRs. If an instance rejects the `state` argument before it ever
+worked, Team Pulse falls back to one unfiltered query and filters locally for the rest of the
+process; if it fails after it worked, the last known good epics are kept.
+
+**Efficiency:** at most two requests per top-level group the user actually works in,
+filtered on the server by assignee and by update time or state, never all epic history.
 
 ## How it is implemented
 
