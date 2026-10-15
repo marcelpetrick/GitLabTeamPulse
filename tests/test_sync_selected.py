@@ -281,8 +281,10 @@ async def test_projects_are_not_refetched_while_fresh(
     before = fake_app.state.requests
     clock.advance(minutes=10)
     await service.sync_selected("scheduled")
-    # 6 work lists, events and timelogs; history is hourly and project metadata stays cached
-    assert 8 <= fake_app.state.requests - before <= 8 + 4
+    # 6 work lists, events and timelogs, plus two small epic queries (recent and open) per
+    # top-level group; history is hourly and project metadata stays cached
+    groups = {p["path_with_namespace"].split("/")[0] for p in fake_app.state.data.projects.values()}
+    assert 8 <= fake_app.state.requests - before <= 8 + 2 * len(groups)
 
 
 async def test_work_snapshot_drops_unassigned_items(
@@ -494,3 +496,64 @@ async def test_stalled_open_epics_stay_and_closed_old_ones_go(
 
 async def test_no_known_group_keeps_the_stored_epics(service: SyncService) -> None:
     assert await service._epics(service.client(), "alex.berger", [], service.clock()) is None
+
+
+async def test_open_epics_use_the_state_filter_and_recent_ones_the_cutoff(
+    service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI
+) -> None:
+    await select_users(service, session_factory, ALEX)
+    await service.sync_selected("scheduled")
+    queries = fake_app.state.epic_queries
+    assert any(q.get("state") == "opened" and q.get("updatedAfter") is None for q in queries)
+    assert any("state" not in q and q.get("updatedAfter") for q in queries)
+    assert all(q.get("updatedAfter") or q.get("state") for q in queries)  # never all history
+    assert service.runtime.epics_open_filter is True
+
+
+async def test_unsupported_state_filter_falls_back_to_local_filtering(
+    service: SyncService,
+    session_factory: sessionmaker[Session],
+    fake_app: FastAPI,
+    clock: Clock,
+) -> None:
+    fake_app.state.epic_state_filter = False
+    epics = fake_app.state.data.epics
+    stalled = next(e for e in epics if e["assignee"] == "alex.berger")
+    stalled["state"] = "OPEN"
+    stalled["updatedAt"] = (clock.now - timedelta(days=90)).isoformat()
+    await select_users(service, session_factory, ALEX)
+    assert await service.sync_selected("scheduled") == "ok"
+    assert service.runtime.epics_open_filter is False
+    assert service.runtime.epics == "available"
+    with session_factory() as session:
+        refs = set(session.scalars(select(WorkItemRecord.reference)))
+    assert stalled["reference"] in refs  # still found through the local filter
+    fake_app.state.epic_queries.clear()
+    clock.advance(minutes=10)
+    await service.sync_selected("scheduled")
+    assert not any("state" in q for q in fake_app.state.epic_queries)  # not asked again
+
+
+async def test_state_filter_failing_after_it_worked_keeps_stored_epics(
+    service: SyncService,
+    session_factory: sessionmaker[Session],
+    fake_app: FastAPI,
+    clock: Clock,
+) -> None:
+    await select_users(service, session_factory, ALEX)
+    await service.sync_selected("scheduled")
+    with session_factory() as session:
+        before = set(
+            session.scalars(select(WorkItemRecord.reference).where(WorkItemRecord.kind == "epic"))
+        )
+    assert before
+    fake_app.state.epic_state_filter = False  # e.g. a transient server-side problem
+    clock.advance(minutes=10)
+    assert await service.sync_selected("scheduled") == "partial"  # work keeps last good data
+    with session_factory() as session:
+        after = set(
+            session.scalars(select(WorkItemRecord.reference).where(WorkItemRecord.kind == "epic"))
+        )
+        assert store.get_state(session, "work", ALEX).status == "error"
+    assert after == before
+    assert service.runtime.epics_open_filter is True

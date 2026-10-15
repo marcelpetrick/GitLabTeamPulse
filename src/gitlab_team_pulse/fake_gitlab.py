@@ -638,6 +638,8 @@ def create_fake_gitlab(
     app.state.request_log = []  # (path, query) of every API request, for load assertions
     app.state.graphql_error = None  # set to a message to simulate missing GraphQL capability
     app.state.epics_supported = True
+    app.state.epic_state_filter = True  # False: the open-only epic query is rejected
+    app.state.epic_queries = []  # variables of every epic query, for load assertions
     app.state.latency = 0.0  # seconds added to every API response (makes "Refreshing" visible)
 
     def base(request: Request) -> str:
@@ -773,6 +775,13 @@ def create_fake_gitlab(
             return JSONResponse(
                 {"errors": [{"message": "Field 'workItems' doesn't exist on type 'Group'"}]}
             )
+        if "state" in variables and not app.state.epic_state_filter:
+            return JSONResponse(
+                {"errors": [{"message": "Field 'workItems' doesn't accept argument 'state'"}]}
+            )
+        app.state.epic_queries.append(dict(variables))
+        updated_after = _parse_time(variables.get("updatedAfter"))
+        wanted_state = {"opened": "OPEN", "closed": "CLOSED"}.get(variables.get("state") or "")
         path = variables.get("fullPath")
         if path not in {
             project["path_with_namespace"].split("/")[0]
@@ -799,7 +808,13 @@ def create_fake_gitlab(
                 ],
             }
             for epic in app.state.data.epics
-            if epic["group"] == path and epic["assignee"] == variables.get("username")
+            if epic["group"] == path
+            and epic["assignee"] == variables.get("username")
+            and (wanted_state is None or epic["state"] == wanted_state)
+            and (
+                updated_after is None
+                or datetime.fromisoformat(epic["updatedAt"].replace("Z", "+00:00")) >= updated_after
+            )
         ]
         return JSONResponse(
             {"data": {"group": {"workItems": {"nodes": nodes, "pageInfo": {"hasNextPage": False}}}}}

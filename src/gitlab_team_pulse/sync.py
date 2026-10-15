@@ -112,6 +112,7 @@ class RuntimeState:
     epics: str = "unknown"  # unknown | available | unavailable
     epics_checked_at: datetime | None = None
     epics_failing_since: datetime | None = None
+    epics_open_filter: bool | None = None  # does GitLab accept the open-only epic query?
 
 
 class SyncService:
@@ -534,10 +535,11 @@ class SyncService:
         if not groups:
             return None  # no group to ask this run: keep the stored epics (last known good)
         try:
-            # All assigned epics, then keep the open ones however old (stalled work must not
-            # drop out of view) and the others updated inside the work window.
-            fetched = await client.get_user_epics(username, groups, None)
-            epics = [e for e in fetched if e.state == "opened" or e.updated_at >= cutoff]
+            # Epics updated inside the work window, plus the open ones however old (stalled
+            # work must not drop out of view).
+            recent = await client.get_user_epics(username, groups, cutoff)
+            still_open = await self._open_epics(client, username, groups)
+            epics = list({e.gitlab_id: e for e in [*recent, *still_open]}.values())
         except GitLabCapabilityError as exc:
             if self.runtime.epics == "available":
                 since = self.runtime.epics_failing_since or now
@@ -570,6 +572,29 @@ class SyncService:
         self.runtime.epics_checked_at = now
         self.runtime.epics_failing_since = None
         return epics
+
+    async def _open_epics(
+        self, client: GitLabClient, username: str, groups: set[str]
+    ) -> list[WorkItem]:
+        """Open epics via the state filter; without it, all epics filtered here (more load).
+
+        A rejected filter before it ever worked means this GitLab does not support it: fall
+        back for the rest of the process. After it worked, a failure is treated as transient.
+        """
+        if self.runtime.epics_open_filter is not False:
+            try:
+                found = await client.get_user_epics(username, groups, None, open_only=True)
+            except GitLabError as exc:
+                # The plain epic query just worked, so a rejection here is about the filter.
+                if self.runtime.epics_open_filter:
+                    raise
+                self.runtime.epics_open_filter = False
+                log.info("open-only epic query not supported, filtering locally: %s", exc)
+            else:
+                self.runtime.epics_open_filter = True
+                return [e for e in found if e.state == "opened"]
+        everything = await client.get_user_epics(username, groups, None)
+        return [e for e in everything if e.state == "opened"]
 
     async def _sync_work(
         self, client: GitLabClient, user_id: int, username: str, run_id: str

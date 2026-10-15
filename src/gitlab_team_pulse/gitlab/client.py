@@ -69,11 +69,11 @@ query($username: String!, $start: Time!, $end: Time!, $after: String) {
 """
 
 
-EPICS_QUERY = """
-query($fullPath: ID!, $username: String!, $updatedAfter: Time, $after: String) {
+EPICS_TEMPLATE = """
+query($fullPath: ID!, $username: String!, $updatedAfter: Time, $after: String__STATE_VAR__) {
   group(fullPath: $fullPath) {
     workItems(types: [EPIC], assigneeUsernames: [$username], includeDescendants: true,
-              updatedAfter: $updatedAfter, first: 50, after: $after) {
+              updatedAfter: $updatedAfter, first: 50, after: $after__STATE_ARG__) {
       nodes {
         id iid title state webUrl createdAt updatedAt closedAt reference(full: true)
         author { username }
@@ -90,6 +90,11 @@ query($fullPath: ID!, $username: String!, $updatedAfter: Time, $after: String) {
   }
 }
 """
+EPICS_QUERY = EPICS_TEMPLATE.replace("__STATE_VAR__", "").replace("__STATE_ARG__", "")
+# Only open epics, however old: stalled epics stay visible without paging through all history.
+OPEN_EPICS_QUERY = EPICS_TEMPLATE.replace("__STATE_VAR__", ", $state: IssuableState").replace(
+    "__STATE_ARG__", ", state: $state"
+)
 
 
 CAPABILITY_PATTERN = re.compile(
@@ -446,7 +451,12 @@ class GitLabClient:
         return result
 
     async def get_user_epics(
-        self, username: str, group_paths: set[str], updated_after: datetime | None
+        self,
+        username: str,
+        group_paths: set[str],
+        updated_after: datetime | None,
+        *,
+        open_only: bool = False,
     ) -> list[WorkItem]:
         """Epics assigned to ``username`` in the given top-level groups (and their subgroups).
 
@@ -457,15 +467,15 @@ class GitLabClient:
         for path in sorted(group_paths):
             cursor: str | None = None
             for _ in range(self._max_pages):
-                data = await self.graphql(
-                    EPICS_QUERY,
-                    {
-                        "fullPath": path,
-                        "username": username,
-                        "updatedAfter": updated_after.isoformat() if updated_after else None,
-                        "after": cursor,
-                    },
-                )
+                variables: dict[str, Any] = {
+                    "fullPath": path,
+                    "username": username,
+                    "updatedAfter": updated_after.isoformat() if updated_after else None,
+                    "after": cursor,
+                }
+                if open_only:
+                    variables["state"] = "opened"
+                data = await self.graphql(OPEN_EPICS_QUERY if open_only else EPICS_QUERY, variables)
                 group = data.get("group")
                 if not isinstance(group, dict):
                     break
