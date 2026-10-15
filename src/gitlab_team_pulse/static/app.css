@@ -667,3 +667,24 @@ main { max-width: 1480px; margin: 0 auto; padding: 24px; outline: none; }
 @media (max-width: 900px) {
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* ---------------------------------------------------------------- about dialog */
+.about-dialog {
+  width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 64px); padding: 0;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  color: var(--text); box-shadow: var(--shadow-lg);
+}
+.about-dialog::backdrop { background: rgb(10 12 16 / 40%); }
+.about-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.about-body { padding: 16px 18px 18px; overflow-y: auto; }
+.about-brand { display: flex; align-items: center; gap: 10px; }
+.about-name { font-size: 1.2rem; }
+.about-body p { margin: 6px 0 12px; }
+.about-facts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 16px; }
+.about-facts dt { color: var(--muted); font-weight: 600; }
+.about-facts dd { margin: 0; overflow-wrap: anywhere; }
+.about-body h3 { margin-bottom: 6px; }
+.about-deps { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.about-deps th { text-align: left; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 4px 8px 4px 0; border-bottom: 1px solid var(--border-strong); }
+.about-deps td { padding: 4px 8px 4px 0; border-bottom: 1px solid var(--border); }
+.about-note { font-size: 0.84rem; margin-top: 12px; }

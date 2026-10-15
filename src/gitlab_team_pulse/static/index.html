@@ -32,6 +32,11 @@
       </button>
     </nav>
     <div class="topbar-actions">
+      <button type="button" class="icon-button" id="open-about" aria-haspopup="dialog"
+              aria-controls="about" title="About">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></svg>
+        <span class="visually-hidden">About</span>
+      </button>
       <button type="button" class="icon-button diag-button" id="open-diagnostics"
               aria-haspopup="dialog" aria-controls="diagnostics" title="Diagnostics">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4M12 17.5v.01"/></svg>
@@ -73,6 +78,17 @@
       <div class="drawer-body" id="diagnostics-body"></div>
     </div>
   </aside>
+
+  <dialog id="about" class="about-dialog" aria-labelledby="about-title">
+    <div class="about-head">
+      <h2 id="about-title">About</h2>
+      <button type="button" class="icon-button" id="close-about" title="Close">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        <span class="visually-hidden">Close about</span>
+      </button>
+    </div>
+    <div class="about-body" id="about-body"></div>
+  </dialog>
 
   <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
   <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>

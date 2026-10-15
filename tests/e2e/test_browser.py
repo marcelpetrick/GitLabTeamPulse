@@ -276,3 +276,16 @@ def test_create_team_see_report_and_show_it_on_the_dashboard(page: Page, stack: 
     page.get_by_role("button", name="Show on dashboard").click()
     expect(page).to_have_url(re.compile(r"#/dashboard$"))
     expect(page.locator("article.card[data-user-id]")).to_have_count(2, timeout=30000)
+
+
+def test_about_dialog(page: Page, stack: LiveStack) -> None:
+    page.goto(stack.url)
+    page.click("#open-about")
+    dialog = page.locator("#about")
+    expect(dialog).to_be_visible()
+    expect(dialog.locator("#about-version")).to_have_text(re.compile(r"^v\d+\.\d+\.\d+$"))
+    expect(dialog).to_contain_text("Marcel Petrick")
+    expect(dialog).to_contain_text("GPL-3.0-or-later")
+    expect(dialog.locator(".about-deps tbody tr", has_text="fastapi")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(dialog).to_be_hidden()

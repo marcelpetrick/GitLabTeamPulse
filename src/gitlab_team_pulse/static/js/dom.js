@@ -65,6 +65,7 @@ export function clear(el) {
 
 /** Only render links that the server already validated as http(s) GitLab URLs. */
 export function safeLink(url, children, attrs = {}) {
+  if (typeof url === "string" && url.startsWith("mailto:")) return h("a", { href: url, ...attrs }, children);
   if (typeof url !== "string" || !/^https?:\/\//.test(url)) return h("span", attrs, children);
   return h("a", { href: url, target: "_blank", rel: "noopener noreferrer", ...attrs }, children);
 }

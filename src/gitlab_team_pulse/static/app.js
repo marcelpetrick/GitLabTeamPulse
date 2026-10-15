@@ -1,6 +1,7 @@
 // GitLab Team Pulse browser app: routing, polling of the local backend, theme and wiring.
 // The browser never talks to GitLab; it only asks this server whether cached data changed.
 
+import { AboutDialog } from "./js/about.js";
 import { api } from "./js/api.js";
 import { DashboardView } from "./js/dashboard.js";
 import { Diagnostics } from "./js/diagnostics.js";
@@ -30,6 +31,7 @@ class App {
     this.dashboardView = new DashboardView(document.getElementById("view-dashboard"), this);
     this.teamsView = new TeamsView(document.getElementById("view-teams"), this);
     this.diagnostics = new Diagnostics(this);
+    this.about = new AboutDialog();
   }
 
   start() {

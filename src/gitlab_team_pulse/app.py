@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from gitlab_team_pulse import __version__, dashboard, db, store, teams
+from gitlab_team_pulse import __version__, about, dashboard, db, store, teams
 from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.logging_setup import configure_logging, get_logger
 from gitlab_team_pulse.models import Project, Team, User
@@ -147,6 +147,11 @@ def api_router() -> APIRouter:
             "gitlab_configured": context.settings.gitlab_configured,
         }
         return JSONResponse(body, status_code=200 if migrated else 503)
+
+    @router.get("/about")
+    def about_info() -> dict[str, Any]:
+        """Version, author, license and runtime dependencies for the About dialog."""
+        return about.about()
 
     @router.get("/status")
     def status(request: Request) -> dict[str, Any]:

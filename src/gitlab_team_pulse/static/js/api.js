@@ -35,6 +35,7 @@ async function request(method, path, body) {
 
 export const api = {
   status: () => request("GET", "/api/status"),
+  about: () => request("GET", "/api/about"),
   users: () => request("GET", "/api/users"),
   dashboard: () => request("GET", "/api/dashboard"),
   errors: (includeResolved) => request("GET", `/api/errors?include_resolved=${includeResolved ? "true" : "false"}`),
