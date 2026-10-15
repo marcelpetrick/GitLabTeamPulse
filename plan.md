@@ -1,5 +1,7 @@
 # Plan — steering signals, teams and team reports (v0.4.0)
 
+**Status: done, released as v0.4.0 on 2026-10-15.**
+
 Implements the ideas the stakeholder accepted from [`ideas20261015.md`](ideas20261015.md) on
 2026-10-15. Branch: `feature/steering-signals`. Release: **v0.4.0** (major feature → minor bump).
 

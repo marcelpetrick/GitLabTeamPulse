@@ -3,6 +3,30 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.4.0 (2026-10-15): steering signals, teams and team reports
+
+- **Needs attention** on the dashboard: one filterable list across the monitored people of
+  stalled items (no update for 7+ days), overdue and due-soon work, MRs waiting for review, MRs
+  that can't be merged, and MRs without a reviewer in the team. Open items stay visible however
+  old they are; cards show stalled/overdue chips and work items `spent / estimate`.
+- **Milestones**: progress, remaining estimate, unestimated and overdue issues and a burn-up,
+  computed from each milestone's issues (GitLab Free has no burndown API).
+- **Teams**: named, shared groups with an optional project scope, a *Show on dashboard* switch,
+  and a team report per week, month or quarter. It compares hours, merged MRs, closed issues,
+  reviews, MR cycle time and estimate accuracy with the same span of the previous period, and
+  shows the share of effort per project and knowledge spread. Last week's digest can be copied
+  as Markdown. The per-person table is optional (`TEAMPULSE_TEAM_PERSON_BREAKDOWN`).
+- History as daily aggregates and finished items (53 weeks), refreshed hourly for selected users
+  and team members; migration 0004. The first sync after the upgrade refetches each person's
+  year of events once.
+- New settings: `TEAMPULSE_STALLED_DAYS`, `_DUE_SOON_DAYS`, `_MILESTONES_MAX`,
+  `_MAX_TRACKED_USERS`, `_TEAMS_READONLY`, `_TEAM_PERSON_BREAKDOWN`.
+- Branch review fixes: the milestone progress sync and the dashboard use one selection rule;
+  an unreadable milestone no longer causes a refetch every run; history diagnostics map to
+  their own dataset.
+- Docs: [steering signals](docs/features/steering-signals.md), architecture, VISION §43.1,
+  [ideas](ideas20261015.md), [plan](plan.md) and new screenshots.
+
 ## 0.3.2 (2026-10-15): dependency update
 
 - Dependencies on the latest stable releases: fastapi 0.143.1, pydantic 2.14.1,
