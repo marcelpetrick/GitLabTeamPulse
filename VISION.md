@@ -1769,6 +1769,23 @@ Implementation can begin without answering these questions.
 
 ---
 
+### 43.1 Answers given after the prototype (v0.4.0, 2026-10-15)
+
+- **Named selection presets/teams:** yes. Teams are named, shared groups of people with an
+  optional project scope; a team can replace the selection with one click.
+- **Longer retention for trend reporting:** yes, as **daily aggregates and finished items only**
+  (`activity_daily`, `timelog_daily`, `outcomes`), kept for the 53-week calendar window. Raw
+  events keep the short retention of section 18. This amends the §4 non-goal "long-term
+  activity warehousing" for aggregates.
+- **A project-centric secondary view:** partly. Milestone progress and the per-project share
+  of effort and knowledge spread inside a team report; navigation stays people-first.
+- **Scoring:** still a non-goal. Team reports show team totals with deltas; the per-person
+  table is optional, alphabetical and has no deltas (`TEAMPULSE_TEAM_PERSON_BREAKDOWN`).
+
+See [`docs/features/steering-signals.md`](docs/features/steering-signals.md).
+
+---
+
 ## 44. Engineering Notes for the First Prototype
 
 A few implementation constraints are worth treating as guardrails from day one:

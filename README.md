@@ -6,7 +6,7 @@
 [![GHCR image](https://img.shields.io/badge/ghcr.io-gitlabteampulse-2496ed?logo=docker&logoColor=white)](https://github.com/marcelpetrick/GitLabTeamPulse/pkgs/container/gitlabteampulse)
 [![License: GPL v3 or later](https://img.shields.io/badge/license-GPLv3%20or%20later-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776ab.svg)](https://www.python.org/)
-[![FastAPI 0.141.1](https://img.shields.io/badge/FastAPI-0.141.1-009688.svg)](https://fastapi.tiangolo.com/)
+[![FastAPI 0.143.1](https://img.shields.io/badge/FastAPI-0.143.1-009688.svg)](https://fastapi.tiangolo.com/)
 [![Coverage: 99%](https://img.shields.io/badge/coverage-99%25-brightgreen.svg)](pyproject.toml)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-fe5196.svg)](https://www.conventionalcommits.org/)
 
@@ -14,6 +14,10 @@ A people-centric dashboard for a **self-managed GitLab** instance. Pick a handfu
 accounts once, and everyone who opens the page sees what those people have recently worked on:
 assigned issues and merge requests in every state, their last twelve actions, seven days of
 activity and seven days of actual GitLab timelogs. It also shows exactly how fresh all of it is.
+
+For whoever steers the team, it points out what is **stalled, overdue or waiting for review**,
+follows **milestone progress**, and reports on named **teams** over weeks, months and quarters.
+All of this works on GitLab Free (see [steering signals](docs/features/steering-signals.md)).
 
 **Author: Marcel Petrick <mail@marcelpetrick.it>**
 
@@ -23,8 +27,10 @@ activity and seven days of actual GitLab timelogs. It also shows exactly how fre
 
 ![Dashboard (light)](docs/media/dashboard-light.png)
 
-| Dark mode | People view |
+| Needs attention and milestones | Team report |
 | --- | --- |
+| ![Needs attention and milestones](docs/media/attention.png) | ![Team report](docs/media/teams.png) |
+| Dark mode | People view |
 | ![Dashboard (dark)](docs/media/dashboard-dark.png) | ![People view](docs/media/people.png) |
 | Contribution calendar (2D) | Contribution skyline (3D, rotate and zoom) |
 | ![Contribution calendar](docs/media/contributions-2d.png) | ![Contribution skyline](docs/media/contributions-3d.png) |
@@ -52,6 +58,18 @@ diagnostics drawer:
   - Contributions: the last 12 months as a GitLab-style calendar, or as a 3D "skyline" you can
     rotate and zoom. Counts use GitLab's contribution rule, computed from events (see
     [the feature notes](docs/features/contribution-graph.md)).
+- **Needs attention**: one list across all monitored people of stalled items (no update for
+  a week means something is wrong), overdue and due-soon work, MRs waiting for review, MRs that
+  can't be merged, and MRs without a reviewer in the team. Open items stay visible however old
+  they are; work items show `spent / estimate` from GitLab time tracking.
+- **Milestones**: progress, remaining estimate, unestimated and overdue issues and a burn-up
+  line, computed from each milestone's issues (GitLab Free has no burndown API).
+- **Teams**: named, shared groups of people with an optional project scope. One click shows a
+  team on the dashboard. The team report compares hours, merged MRs, closed issues, reviews,
+  MR cycle time and estimate accuracy with the previous period, shows the share of effort per
+  project and which projects depend on a single person, and copies last week as Markdown.
+  Totals are team-level; a per-person table is optional
+  ([details](docs/features/steering-signals.md)).
 - **Facts only**: time comes from GitLab timelogs (one
   [GraphQL query](docs/GRAPHQL.md#1-timelogs-actual-logged-time) per user), never estimated. Nothing is scored, and
   there is no hard-coded 40-hour judgment. A week with no logged time is simply highlighted.
@@ -179,6 +197,12 @@ directory; for another file use `uv run --env-file path/to/file.env gitlab-team-
 | `TEAMPULSE_ACTIVITY_DAYS` | `7` | Activity and timelog window |
 | `TEAMPULSE_CONTRIBUTIONS_REFRESH_MINUTES` | `60` | How often the 12-month contribution calendar is refreshed |
 | `TEAMPULSE_TIMEZONE` | `UTC` | Time zone for calendar-day buckets |
+| `TEAMPULSE_STALLED_DAYS` | `7` | Open items without an update for this long are "stalled" |
+| `TEAMPULSE_DUE_SOON_DAYS` | `7` | Due dates within this many days are "due soon" |
+| `TEAMPULSE_MILESTONES_MAX` | `12` | Milestones whose progress is computed (`0` turns it off) |
+| `TEAMPULSE_MAX_TRACKED_USERS` | `30` | Selected users plus team members whose history is kept |
+| `TEAMPULSE_TEAMS_READONLY` | `false` | Lock creating, editing and deleting teams |
+| `TEAMPULSE_TEAM_PERSON_BREAKDOWN` | `false` | Show the per-person table in team reports |
 
 The token is never written to SQLite, logs (a redaction filter guards them), API responses or
 exception text shown in the UI. It is sent only to the configured GitLab host, and pagination
@@ -192,15 +216,15 @@ freshness state model, the data model and the deployment view, all as Mermaid di
 
 ```text
 Browser (HTML/CSS/ES modules, SVG charts)
-   │  polls /api/status (data_version) · reads /api/dashboard, /api/users · PATCH selection · POST refresh
+   │  polls /api/status (data/users/teams versions) · reads /api/dashboard, /api/users, /api/teams · PATCH selection · POST refresh
 FastAPI app (single worker) ── security headers (CSP, no CORS), cached reads only
    │
-   ├── Scheduler (asyncio): directory hourly · selected users every 10 min · cleanup hourly
+   ├── Scheduler (asyncio): directory hourly · selected users every 10 min · history and milestones hourly · cleanup hourly
    │        └── manual refresh coalescing and throttling, immediate sync for newly selected users
    ├── SyncService: per-user, per-dataset transactions; last-known-good; diagnostics
    │        └── GitLabClient (httpx): REST + GraphQL (timelogs, epics), pagination, retries, bounded concurrency
    └── SQLite (SQLAlchemy + Alembic, WAL, foreign keys) ── users, work items, events, timelogs,
-            projects, sync state, runs, errors
+            projects, milestones, teams, daily history aggregates, outcomes, sync state, runs, errors
 ```
 
 | Module | Responsibility |
@@ -209,12 +233,16 @@ FastAPI app (single worker) ── security headers (CSP, no CORS), cached reads
 | `sync.py`, `scheduler.py` | Synchronization, freshness bookkeeping, scheduling |
 | `store.py`, `models.py`, `migrations/` | Persistence and schema history |
 | `retention.py` | Rolling cleanup that never removes the only good snapshot |
-| `dashboard.py`, `app.py` | Batched read model (no N+1 queries) and HTTP API |
+| `dashboard.py`, `app.py` | Batched read model (no N+1 queries), attention list and HTTP API |
+| `teams.py` | Team payloads, team reports from the history aggregates, weekly digest |
 | `fake_gitlab.py` | Deterministic fake GitLab for demo, integration and browser tests |
 
 HTTP API: `GET /api/health`, `/api/status`, `/api/users`, `/api/dashboard`,
-`/api/users/{id}/work|activity|time-summary`, `/api/errors`, `PATCH /api/users/{id}/selection`,
-`POST /api/refresh` (202 or 429 with `Retry-After`). Interactive docs are at `/api/docs`.
+`/api/users/{id}/work|activity|time-summary`, `/api/errors`, `/api/projects`,
+`PATCH /api/users/{id}/selection`, `POST /api/refresh` (202 or 429 with `Retry-After`),
+`GET|POST /api/teams`, `PUT|DELETE /api/teams/{id}`, `POST /api/teams/{id}/apply`,
+`GET /api/teams/{id}/report?period=week|month|quarter&offset=N` and
+`GET /api/teams/{id}/digest`. Interactive docs are at `/api/docs`.
 
 Why and how GitLab's GraphQL API is used (timelogs and epics) and what it saves compared
 with REST is explained in [`docs/GRAPHQL.md`](docs/GRAPHQL.md).
@@ -259,5 +287,9 @@ appended, e.g. `feat(docker): … (v0.1.0)`. See [`CHANGELOG.md`](CHANGELOG.md).
   diagrams (context, containers, components, dynamic, data and deployment views).
 - [`docs/GRAPHQL.md`](docs/GRAPHQL.md): what GraphQL is, why it is used for timelogs and
   epics, and how many requests it saves compared with REST.
+- [`docs/features/steering-signals.md`](docs/features/steering-signals.md): needs attention,
+  milestones, teams and team reports: rules, counting, GitLab Free workarounds and load.
+- [`ideas20261015.md`](ideas20261015.md) and [`plan.md`](plan.md): the reviewed feature ideas
+  and the implementation plan behind v0.4.0.
 - [`CHANGELOG.md`](CHANGELOG.md): release history.
 - [`SECURITY.md`](SECURITY.md): how to report vulnerabilities and the deployment assumptions.

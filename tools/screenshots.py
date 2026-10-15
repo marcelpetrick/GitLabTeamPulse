@@ -59,8 +59,24 @@ def main() -> None:
                     )
                     page.goto(f"{base}/#/dashboard")
                     page.wait_for_selector(".card .work-table")
+                    page.wait_for_selector(".milestone-progress", timeout=30000)
                     page.wait_for_timeout(500)
+                    if theme == "light":
+                        page.screenshot(path=OUT / "attention.png")
+                    # The person cards sit below the attention strip and the milestones.
+                    page.evaluate(
+                        "window.scrollTo(0, document.querySelector('.cards').offsetTop - 70)"
+                    )
+                    page.wait_for_timeout(300)
                     page.screenshot(path=OUT / f"dashboard-{theme}.png")
+                page = browser.new_page(
+                    viewport={"width": 1440, "height": 1300}, color_scheme="light"
+                )
+                page.goto(f"{base}/#/teams")
+                page.wait_for_selector(".pill.fresh >> text=History", timeout=60000)
+                page.wait_for_selector(".kpis")
+                page.wait_for_timeout(500)
+                page.screenshot(path=OUT / "teams.png")
                 page = browser.new_page(
                     viewport={"width": 1440, "height": 900}, color_scheme="light"
                 )

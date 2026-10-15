@@ -110,8 +110,9 @@ flowchart TB
     subgraph proc["Python process [Container]"]
         direction TB
         subgraph web["Web side: reads only"]
-            routes["<b>API router</b><br/>[Component: app.py]<br/>health, status, users, selection,<br/>dashboard, errors, refresh"]
-            reader["<b>Read model</b><br/>[Component: dashboard.py]<br/>batched queries, URL sanitizing"]
+            routes["<b>API router</b><br/>[Component: app.py]<br/>health, status, users, selection,<br/>dashboard, teams, errors, refresh"]
+            reader["<b>Read model</b><br/>[Component: dashboard.py]<br/>batched queries, attention list,<br/>milestones, URL sanitizing"]
+            teams["<b>Team reports</b><br/>[Component: teams.py]<br/>periods, scope, deltas,<br/>knowledge spread, digest"]
             fresh["<b>Freshness classifier</b><br/>[Component: freshness.py]<br/>fresh / refreshing / stale / error / never"]
         end
         subgraph bg["Background side: talks to GitLab"]
@@ -129,6 +130,8 @@ flowchart TB
     gitlab["<b>Self-managed GitLab</b><br/>[Software System]"]
 
     routes --> reader
+    routes --> teams
+    teams -->|reads aggregates| db
     reader --> fresh
     routes -->|"request_refresh,<br/>request_user_sync"| sched
     sched -->|runs jobs| sync
@@ -145,7 +148,7 @@ flowchart TB
     classDef database fill:#438dd5,stroke:#2e6295,color:#fff
     classDef external fill:#999999,stroke:#6b6b6b,color:#fff
     classDef boundary fill:none,stroke:#444,stroke-dasharray:6 4,color:#444
-    class routes,reader,fresh,sched,sync,ret,client,norm,store,config component
+    class routes,reader,teams,fresh,sched,sync,ret,client,norm,store,config component
     class db database
     class gitlab external
     class proc,web,bg boundary
@@ -162,9 +165,26 @@ flowchart TB
   commits its data, its sync state and the bumped version counter together, or not at all.
 - **Reads never trigger crawls.** The API router uses the read model only; the most it can do
   to the scheduler is wake it.
-- **Two version counters.** `data_version` changes on every sync step (the dashboard);
-  `users_version` changes only with the directory or the selection (the People view). Each
-  browser view refetches only when its own counter moves.
+- **Three version counters.** `data_version` changes on every sync step (the dashboard);
+  `users_version` changes only with the directory or the selection (the People view);
+  `teams_version` changes when a team is created, edited or deleted. Each browser view
+  refetches only when its own counter moves.
+
+### Sync categories and their cadence
+
+| Category | Who | Cadence | Source (GitLab Free) |
+| --- | --- | --- | --- |
+| `work` | selected | every run (10 min) | REST issues / MRs: updated in the work window, plus all open ones |
+| `activity`, `timelogs` | selected | every run | REST events, GraphQL timelogs (7 days) |
+| `contributions` | selected + team members | hourly | REST events: calendar counts and `activity_daily` |
+| `timelog_history` | selected + team members | hourly | GraphQL timelogs: backfill 53 weeks, then re-read 31 days |
+| `outcomes` | selected + team members | hourly | REST merged MRs (author) and issues (assignee), incremental |
+| `milestones` | global | hourly | REST milestone issues of up to 12 active milestones of open work |
+
+Team members who are not selected only get the hourly history categories (capped by
+`TEAMPULSE_MAX_TRACKED_USERS`). History is stored as daily aggregates and finished items, never
+as raw events, and is trimmed to the 53-week calendar window. See
+[`features/steering-signals.md`](features/steering-signals.md).
 
 ## Dynamic view: manual "Refresh now"
 
@@ -248,6 +268,13 @@ erDiagram
     users ||--o{ timelogs : logged
     users ||--o{ sync_state : "per dataset"
     users ||--o{ contribution_days : "calendar"
+    users ||--o{ activity_daily : "history"
+    users ||--o{ timelog_daily : "history"
+    users ||--o{ outcomes : "merged / closed"
+    teams ||--o{ team_members : members
+    users ||--o{ team_members : "member of"
+    teams ||--o{ team_scopes : "project scope"
+    milestones |o--o{ work_items : "milestone_id"
     projects |o--o{ work_items : "project_id (resolved on demand)"
     projects |o--o{ activity_events : "project_id"
     projects |o--o{ timelogs : "project_id"
@@ -265,6 +292,46 @@ erDiagram
         int gitlab_id "unique with kind"
         string state "any state is kept"
         datetime updated_at
+        int time_estimate "seconds"
+        int time_spent "seconds"
+        json reviewers "usernames"
+        string merge_status "detailed_merge_status"
+    }
+    milestones {
+        int id PK "GitLab milestone id"
+        date due_date
+        json stats "computed from the milestone issues"
+    }
+    teams {
+        int id PK
+        string name "unique"
+    }
+    team_members {
+        int team_id PK
+        int user_id PK
+    }
+    team_scopes {
+        int team_id PK
+        string path PK "project or namespace prefix"
+    }
+    activity_daily {
+        int user_id PK
+        date day PK
+        int project_id PK "0 = none"
+        string metric PK "mr_opened, mr_approved, ..."
+        int value
+    }
+    timelog_daily {
+        int user_id PK
+        date day PK
+        int project_id PK
+        int seconds
+    }
+    outcomes {
+        int id PK
+        int user_id FK
+        string kind "merge_request (author), issue (assignee)"
+        datetime finished_at "merged_at or closed_at"
     }
     work_item_assignees {
         int work_item_id FK
@@ -307,7 +374,7 @@ erDiagram
         datetime resolved_at
     }
     app_state {
-        string key PK "data_version, users_version"
+        string key PK "data_version, users_version, teams_version"
     }
 ```
 
