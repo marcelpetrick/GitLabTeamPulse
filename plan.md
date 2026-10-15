@@ -189,11 +189,6 @@ Requested 2026-10-15. Branch: `feature/clickable-alerts`.
 - **Decision 2026-10-15: stay on Python 3.14** (`.python-version`, Docker image, CI) for a
   while; do not move to Python 3.15 until the user decides otherwise.
 
-- **Epic load on Premium instances** (review of v0.4.2): epics are fetched without an update
-  cutoff and filtered client-side, so each run pages through every epic ever assigned to a
-  person. Use a second, open-only GraphQL query (like issues and MRs) once the `state` filter
-  of `group.workItems` is verified on the target GitLab version. GitLab Free is not affected.
-
 ---
 
 # Plan — v0.4.3: tooltips everywhere
@@ -214,3 +209,15 @@ something means without documentation. Branch: `feature/tooltips`.
 3. **Guard**: the inventory becomes a browser test that fails when a visible element has no
    tooltip, so new UI cannot regress.
 4. Pipeline, `/reviewBranch`, release v0.4.3, CI green, dashboard restarted.
+
+---
+
+# Plan — v0.4.4: lighter epic sync
+
+**Status: done, released as v0.4.4 on 2026-10-15.**
+
+The follow-up from the v0.4.2 review. Epics are fetched with two small GraphQL queries per
+top-level group (recently updated, and open ones however old) instead of every epic ever
+assigned. The `state` filter is used when the instance accepts it; otherwise the sync falls back
+to local filtering once and stays there. Only Premium instances have epics; GitLab Free is not
+affected.

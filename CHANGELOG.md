@@ -3,6 +3,13 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.4.4 (2026-10-15): lighter epic sync
+
+- Epics come from two small GraphQL queries per top-level group (recently updated, and open
+  ones however old via the `state` filter) instead of paging through every epic ever assigned.
+  Instances that reject the filter fall back to local filtering. Only Premium instances have
+  epics; GitLab Free is not affected.
+
 ## 0.4.3 (2026-10-15): tooltips everywhere
 
 - Every button, filter, select, input, link, number, status pill, badge, KPI tile, attention
