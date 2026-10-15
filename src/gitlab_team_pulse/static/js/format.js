@@ -39,7 +39,15 @@ export function shortDateTime(value) {
   return d.toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
 export function formatDate(value) {
+  if (typeof value === "string" && DATE_ONLY.test(value)) {
+    // A calendar day (due date, period bounds) has no time zone: never shift it by the
+    // browser's offset (new Date("2026-10-15") is UTC midnight, the 14th west of UTC).
+    const [y, m, d] = value.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+  }
   const d = toDate(value);
   if (!d) return "—";
   return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });

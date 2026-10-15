@@ -316,3 +316,28 @@ def test_alert_chips_open_the_affected_items(page: Page, stack: LiveStack, alert
     heading = card.locator(".work h3")
     expect(heading).to_contain_text(f"{expected} of")
     expect(heading).to_be_in_viewport()
+
+
+def test_due_dates_do_not_shift_west_of_utc(browser: Browser, stack: LiveStack) -> None:
+    context = browser.new_context(timezone_id="America/New_York")
+    page = context.new_page()
+    try:
+        select_alex(page, stack)
+        page.click("#tab-dashboard")
+        card = page.locator(f'article.card[data-user-id="{ALEX}"]')
+        expect(card.locator(".work-table")).to_be_visible(timeout=30000)
+        card.locator('.work [data-filter="overdue"]').click()
+        rows = card.locator(".work-table tbody tr")
+        expect(rows.first).to_be_visible()
+        dashboard = page.evaluate("fetch('/api/dashboard').then(r => r.json())")
+        work = next(c for c in dashboard["cards"] if c["user"]["id"] == ALEX)["work"]
+        due = {w["title"]: w["due_date"] for w in work if w["due_date"]}
+        title = rows.first.locator(".title").inner_text().strip()
+        year, month, day = (int(part) for part in due[title].split("-"))
+        expected = f"{day:02d} {MONTHS[month - 1]} {year}"
+        expect(rows.first.locator("td.overdue")).to_contain_text(expected)
+    finally:
+        context.close()
+
+
+MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"]
