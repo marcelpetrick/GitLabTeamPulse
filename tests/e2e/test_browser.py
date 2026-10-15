@@ -117,6 +117,7 @@ def test_outage_marks_stale_error_and_keeps_data(page: Page, stack: LiveStack) -
     expect(banner).to_contain_text("Showing cached data")
     expect(card.locator(".work-table tbody tr")).to_have_count(rows)
     expect(card.locator(".pill.error")).to_be_visible()
+    assert missing_tooltips(page) == []  # the outage state explains itself too
     expect(page.locator("#status-problems")).to_contain_text(
         re.compile(r"Diagnostics · \d+ problems?")
     )
@@ -341,3 +342,86 @@ def test_due_dates_do_not_shift_west_of_utc(browser: Browser, stack: LiveStack) 
 
 
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"]
+
+
+# Everything a user can act on or read a number or status from must explain itself on hover.
+TOOLTIP_TARGETS = ", ".join(
+    [
+        "button",
+        "select",
+        "input",
+        "textarea",
+        "a[href]",
+        "summary",
+        ".badge",
+        ".stat",
+        ".pill",
+        ".kpi",
+        ".attention-tile",
+        ".label-chip",
+        ".time-chip",
+        ".tab-count",
+        ".status-item",
+        ".milestone-due",
+        ".progress",
+        ".delta",
+        ".scope-chip",
+        "th",
+    ]
+)
+MISSING_TOOLTIPS = """() => [...document.querySelectorAll(TARGETS)]
+    .filter(el => el.getClientRects().length && !el.closest('#tooltip'))
+    .filter(el => !el.closest('[title]') && !el.hasAttribute('data-tooltip'))
+    .map(el => {
+        const cls = typeof el.className === 'string' ? el.className.trim() : '';
+        const name = el.tagName.toLowerCase() + (el.id ? '#' + el.id : '')
+            + (cls ? '.' + cls.split(/\\s+/).join('.') : '');
+        const text = (el.textContent || el.value || '').trim().replace(/\\s+/g, ' ');
+        return name + ' "' + text.slice(0, 40) + '"';
+    })""".replace("TARGETS", repr(TOOLTIP_TARGETS))
+
+
+def missing_tooltips(page: Page) -> list[str]:
+    result: list[str] = page.evaluate(MISSING_TOOLTIPS)
+    return sorted(set(result))
+
+
+def test_every_control_and_figure_has_a_tooltip(page: Page, stack: LiveStack) -> None:
+    select_alex(page, stack)
+    page.click("#tab-dashboard")
+    expect(page.locator("article.card .work-table")).to_be_visible(timeout=30000)
+    expect(page.locator(".milestone-progress").first).to_be_visible(timeout=30000)
+    missing = {"dashboard": missing_tooltips(page)}
+    card = page.locator(f'article.card[data-user-id="{ALEX}"]')
+    card.get_by_role("button", name="3D skyline").click()
+    expect(card.locator("canvas.skyline-canvas")).to_be_visible()
+    card.get_by_role("button", name="Show all 12").click()
+    missing["dashboard (3D, expanded)"] = missing_tooltips(page)
+    page.click("#status-problems")
+    expect(page.locator("#diagnostics")).to_be_visible()
+    missing["diagnostics"] = missing_tooltips(page)
+    page.keyboard.press("Escape")
+    page.click("#open-about")
+    expect(page.locator("#about .about-deps tbody tr").first).to_be_visible()
+    missing["about"] = missing_tooltips(page)
+    page.keyboard.press("Escape")
+    page.click("#tab-people")
+    expect(page.locator(".people-row[data-user-id]").first).to_be_visible()
+    missing["people"] = missing_tooltips(page)
+    page.click("#tab-teams")
+    expect(page.get_by_role("heading", name="No teams yet")).to_be_visible()
+    missing["teams (empty)"] = missing_tooltips(page)
+    page.click("#new-team")
+    expect(page.locator("#team-editor .member-option").first).to_be_visible()
+    page.fill("#team-name", "Tooltips")
+    page.locator("#team-editor .member-option input").first.check()
+    page.fill("#team-scope", "platform")
+    page.locator("#team-editor").get_by_role("button", name="Add").click()
+    missing["team editor"] = missing_tooltips(page)
+    page.click("#save-team")
+    expect(page.locator(".kpis")).to_be_visible(timeout=30000)
+    page.locator(".counting summary").click()
+    missing["teams"] = missing_tooltips(page)
+    report = {view: found for view, found in missing.items() if found}
+    lines = [f"{view}: {item}" for view, found in report.items() for item in found]
+    assert report == {}, "\n".join(lines)
