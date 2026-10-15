@@ -128,3 +128,23 @@ suggestions from known projects.
 
 Planned vs. unplanned work (idea 4), releases shipped per scope, team-vs-team comparison,
 per-person timelog hygiene, locally entered absences.
+
+---
+
+# Plan — v0.4.1: diagnostics fix, About dialog, showcase
+
+Requested 2026-10-15 after the v0.4.0 release. Branch: `feature/about-and-showcase`.
+
+1. **Stale diagnostics** (done in `c4d9fe7`): open problems of people who are neither selected
+   nor in a team are resolved by the hourly cleanup; before, a deselected account's errors (e.g.
+   `docker_imagecheck`, events 404) stayed in Diagnostics forever.
+2. **About dialog**: an *About* button in the top bar opens a small dialog with name, version,
+   author and contact, license (GPL-3.0-or-later), repository link, Python version, the runtime
+   dependencies with their versions and licenses (read from the installed package metadata via
+   `GET /api/about`), and the note that the project is generated with AI.
+3. **Screenshots**: regenerate all README screenshots and add the new features: milestones,
+   the team editor and the About dialog.
+4. **README showcase**: a "New in 0.4" section with the attention strip, milestones, team report
+   and team editor.
+5. Tests (API and browser), full pipeline, `/reviewBranch`, fixes, changelog, v0.4.1 release,
+   restart the dashboard and show it in Firefox.
