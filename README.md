@@ -27,19 +27,39 @@ All of this works on GitLab Free (see [steering signals](docs/features/steering-
 
 ![Dashboard (light)](docs/media/dashboard-light.png)
 
-| Needs attention and milestones | Team report |
+### New in 0.4: steering signals and teams
+
+**Needs attention.** One list across everyone on the dashboard: stalled work (no update for a
+week means something is wrong), overdue and due-soon items, MRs waiting for review, MRs that
+can't be merged and MRs without a reviewer. Click a tile to filter.
+
+![Needs attention](docs/media/attention.png)
+
+**Milestones.** Progress, remaining estimate, unestimated and overdue issues and a burn-up
+line for the milestones your people work in. GitLab Free has no burndown API, so Team Pulse
+computes it from each milestone's issues.
+
+![Milestones](docs/media/milestones.png)
+
+| Team report: totals vs the previous period, share of effort, knowledge spread | Team editor: members and project scope |
 | --- | --- |
-| ![Needs attention and milestones](docs/media/attention.png) | ![Team report](docs/media/teams.png) |
-| Dark mode | People view |
-| ![Dashboard (dark)](docs/media/dashboard-dark.png) | ![People view](docs/media/people.png) |
+| ![Team report](docs/media/teams.png) | ![Team editor](docs/media/team-editor.png) |
+
+| About: version, author, license and dependencies | Dark mode |
+| --- | --- |
+| ![About dialog](docs/media/about.png) | ![Dashboard (dark)](docs/media/dashboard-dark.png) |
+
+### Also in the box
+
+| People view | Outage handling |
+| --- | --- |
+| ![People view](docs/media/people.png) | ![Outage with diagnostics](docs/media/outage-diagnostics.png) |
 | Contribution calendar (2D) | Contribution skyline (3D, rotate and zoom) |
 | ![Contribution calendar](docs/media/contributions-2d.png) | ![Contribution skyline](docs/media/contributions-3d.png) |
 
 When GitLab is unreachable, the dashboard keeps the last known good data, marks it with an
 icon and a text label (color is never the only signal), and explains the problem in the
-diagnostics drawer:
-
-![Outage with diagnostics](docs/media/outage-diagnostics.png)
+diagnostics drawer (screenshot above).
 
 ## What it does
 
@@ -85,6 +105,8 @@ diagnostics drawer:
 - **Low GitLab load**: detailed crawling only for selected users, project metadata only on
   demand, incremental activity sync, bounded concurrency, and retries with backoff and jitter.
   Authentication errors fail fast.
+- **About dialog**: version, author, license, source link and the runtime dependencies with
+  their versions and licenses, read from the installed package.
 - **Polished, dependency-free UI**: plain HTML, CSS and ES modules served by FastAPI, native
   SVG charts, no CDN, and no Node.js build. It has light and dark themes (kept for the browser
   session), keyboard support, and all data text stays selectable and copyable.
@@ -242,7 +264,7 @@ HTTP API: `GET /api/health`, `/api/status`, `/api/users`, `/api/dashboard`,
 `PATCH /api/users/{id}/selection`, `POST /api/refresh` (202 or 429 with `Retry-After`),
 `GET|POST /api/teams`, `PUT|DELETE /api/teams/{id}`, `POST /api/teams/{id}/apply`,
 `GET /api/teams/{id}/report?period=week|month|quarter&offset=N` and
-`GET /api/teams/{id}/digest`. Interactive docs are at `/api/docs`.
+`GET /api/teams/{id}/digest` and `GET /api/about`. Interactive docs are at `/api/docs`.
 
 Why and how GitLab's GraphQL API is used (timelogs and epics) and what it saves compared
 with REST is explained in [`docs/GRAPHQL.md`](docs/GRAPHQL.md).

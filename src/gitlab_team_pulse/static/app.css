@@ -556,7 +556,7 @@ main { max-width: 1480px; margin: 0 auto; padding: 24px; outline: none; }
   box-shadow: var(--shadow); padding: 16px 20px; margin-bottom: 18px;
 }
 .milestone-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
-.milestone { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; background: var(--surface-2); }
+.milestone { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; align-content: start; background: var(--surface-2); }
 .milestone.is-overdue { border-color: color-mix(in srgb, var(--err) 50%, var(--border)); }
 .milestone.is-soon { border-color: color-mix(in srgb, var(--warn) 50%, var(--border)); }
 .milestone-title { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; flex-wrap: wrap; }

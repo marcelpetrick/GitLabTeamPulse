@@ -63,6 +63,11 @@ def main() -> None:
                     page.wait_for_timeout(500)
                     if theme == "light":
                         page.screenshot(path=OUT / "attention.png")
+                        # The fixed status bar would overlap an element screenshot.
+                        bar = "document.getElementById('statusbar').style.visibility"
+                        page.evaluate(f"{bar} = 'hidden'")
+                        page.locator("section.milestones").screenshot(path=OUT / "milestones.png")
+                        page.evaluate(f"{bar} = ''")
                     # The person cards sit below the attention strip and the milestones.
                     page.evaluate(
                         "window.scrollTo(0, document.querySelector('.cards').offsetTop - 70)"
@@ -77,6 +82,17 @@ def main() -> None:
                 page.wait_for_selector(".kpis")
                 page.wait_for_timeout(500)
                 page.screenshot(path=OUT / "teams.png")
+                page.get_by_role("button", name="Edit").click()
+                page.wait_for_selector(".member-option")
+                page.wait_for_timeout(300)
+                page.set_viewport_size({"width": 1440, "height": 900})
+                page.screenshot(path=OUT / "team-editor.png")
+                page.keyboard.press("Escape")
+                page.click("#open-about")
+                page.wait_for_selector("#about .about-deps tbody tr")
+                page.wait_for_timeout(300)
+                page.screenshot(path=OUT / "about.png")
+                page.keyboard.press("Escape")
                 page = browser.new_page(
                     viewport={"width": 1440, "height": 900}, color_scheme="light"
                 )
