@@ -212,7 +212,7 @@ def api_router() -> APIRouter:
                 "timezone": context.settings.timezone,
                 "activity_days": context.settings.activity_days,
                 "status": status_payload,
-                "cards": reader.cards(store.selected_users(session)),
+                **reader.overview(store.selected_users(session)),
             }
 
     def one_card(request: Request, user_id: int) -> dict[str, Any]:

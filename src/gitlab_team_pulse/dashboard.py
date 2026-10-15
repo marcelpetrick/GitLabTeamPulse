@@ -21,6 +21,7 @@ from gitlab_team_pulse.models import (
     ActivityEventRecord,
     ContributionDay,
     ErrorRecord,
+    Milestone,
     Project,
     SyncState,
     TimelogRecord,
@@ -37,6 +38,16 @@ USER_DATASETS = ("work", "activity", "timelogs")
 ERROR_DATASETS = (*USER_DATASETS, "contributions")
 OPEN_STATES = {"opened", "open", "locked"}
 ACTIVITY_PREVIEW = 5
+# detailed_merge_status values that mean "this cannot be merged as it is" (GitLab Free).
+MERGE_PROBLEMS = {
+    "conflict": "conflict",
+    "need_rebase": "need_rebase",
+    "ci_must_pass": "pipeline",
+    "discussions_not_resolved": "threads",
+    "requested_changes": "changes_requested",
+    "blocked_status": "blocked",
+}
+SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
 
 
 def safe_url(url: str | None, settings: Settings) -> str | None:
@@ -156,6 +167,47 @@ def _group_payload(reference: str) -> dict[str, Any] | None:
     return {"id": None, "name": group, "path": group, "web_url": None} if group else None
 
 
+ATTENTION_FIELDS = (
+    "id",
+    "kind",
+    "reference",
+    "title",
+    "state",
+    "draft",
+    "web_url",
+    "project",
+    "created_at",
+    "updated_at",
+    "due_date",
+    "milestone",
+    "reviewers",
+)
+ATTENTION_CODES = (
+    "stalled",
+    "overdue",
+    "due_soon",
+    "review",
+    "cannot_merge",
+    "no_reviewer",
+    "outside_reviewer",
+)
+
+
+def merge_problems(item: WorkItemRecord) -> list[str]:
+    """Why an open MR cannot be merged as it is, from fields GitLab Free provides."""
+    if item.kind != "merge_request" or item.state not in OPEN_STATES:
+        return []
+    problems = []
+    if item.has_conflicts or item.merge_status == "conflict":
+        problems.append("conflict")
+    mapped = MERGE_PROBLEMS.get(item.merge_status or "")
+    if mapped and mapped not in problems:
+        problems.append(mapped)
+    if item.discussions_resolved is False and "threads" not in problems:
+        problems.append("threads")
+    return problems
+
+
 def local_days(settings: Settings, now: datetime) -> list[date]:
     today = now.astimezone(settings.tz).date()
     return [today - timedelta(days=offset) for offset in range(settings.activity_days - 1, -1, -1)]
@@ -225,8 +277,181 @@ class DashboardReader:
                 "relations": [relation],
                 "project": _project_payload(item.project_id, projects, self.settings)
                 or _group_payload(item.reference),
+                "merged_at": item.merged_at,
+                "time_estimate": item.time_estimate,
+                "time_spent": item.time_spent,
+                "reviewers": item.reviewers,
+                "merge_status": item.merge_status,
+                "merge_problems": merge_problems(item),
+                "milestone_id": item.milestone_id,
+                "stalled_days": self.stalled_days(item),
             }
         return {uid: list(items.values()) for uid, items in grouped.items()}
+
+    def stalled_days(self, item: WorkItemRecord) -> int | None:
+        """Days without any update for open items past the threshold, else None."""
+        if item.state not in OPEN_STATES:
+            return None
+        days = (self.now - item.updated_at).days
+        return days if days >= self.settings.stalled_days else None
+
+    def today(self) -> date:
+        return self.now.astimezone(self.settings.tz).date()
+
+    def attention(self, users: list[User], work: dict[int, list[dict[str, Any]]]) -> dict[str, Any]:
+        """Open items across the monitored people that need someone to act, one row per item.
+
+        Reasons: stalled (no update for ``stalled_days``), overdue, due soon, waiting for review,
+        cannot merge, and MRs without a reviewer among the monitored people.
+        """
+        today = self.today()
+        monitored = {u.username for u in users}
+        rows: dict[int, dict[str, Any]] = {}
+        for user in users:
+            for item in work.get(user.id, []):
+                if item["state"] not in OPEN_STATES:
+                    continue
+                row = rows.get(item["id"])
+                if row is None:
+                    row = rows[item["id"]] = {
+                        **{k: item[k] for k in ATTENTION_FIELDS},
+                        "people": [],
+                        "reasons": {},
+                    }
+                row["people"].append(
+                    {"username": user.username, "name": user.name, "relations": item["relations"]}
+                )
+                self._reasons(row["reasons"], item, monitored, today)
+        items = []
+        for row in rows.values():
+            if not row["reasons"]:
+                continue
+            row["reasons"] = sorted(
+                row["reasons"].values(), key=lambda r: (SEVERITY_ORDER[r["severity"]], r["code"])
+            )
+            row["severity"] = row["reasons"][0]["severity"]
+            items.append(row)
+        items.sort(
+            key=lambda r: (SEVERITY_ORDER[r["severity"]], r["updated_at"] or self.now, r["id"])
+        )
+        counts: dict[str, int] = dict.fromkeys(ATTENTION_CODES, 0)
+        for row in items:
+            for reason in row["reasons"]:
+                counts[reason["code"]] += 1
+        return {
+            "stalled_days": self.settings.stalled_days,
+            "due_soon_days": self.settings.due_soon_days,
+            "counts": counts,
+            "items": items,
+        }
+
+    def _reasons(
+        self,
+        reasons: dict[str, dict[str, Any]],
+        item: dict[str, Any],
+        monitored: set[str],
+        today: date,
+    ) -> None:
+        relations = item["relations"]
+        is_mr = item["kind"] == "merge_request"
+        if "assignee" in relations:
+            if item["stalled_days"] is not None:
+                reasons["stalled"] = {
+                    "code": "stalled",
+                    "severity": "error",
+                    "days": item["stalled_days"],
+                }
+            due = item["due_date"]
+            if due is not None and due < today:
+                reasons["overdue"] = {
+                    "code": "overdue",
+                    "severity": "error",
+                    "days": (today - due).days,
+                }
+            elif due is not None and (due - today).days <= self.settings.due_soon_days:
+                reasons["due_soon"] = {
+                    "code": "due_soon",
+                    "severity": "warning",
+                    "days": (due - today).days,
+                }
+            if is_mr and not item["draft"]:
+                reviewers = set(item["reviewers"])
+                if not reviewers:
+                    reasons["no_reviewer"] = {"code": "no_reviewer", "severity": "warning"}
+                elif not reviewers & monitored:
+                    reasons["outside_reviewer"] = {
+                        "code": "outside_reviewer",
+                        "severity": "info",
+                        "reviewers": sorted(reviewers),
+                    }
+        if is_mr and not item["draft"]:
+            if "reviewer" in relations:
+                created = item["created_at"] or item["updated_at"]
+                age = (self.now - created).days
+                reasons["review"] = {
+                    "code": "review",
+                    "severity": "warning" if age >= 2 else "info",
+                    "days": age,
+                    "idle_days": (self.now - item["updated_at"]).days,
+                }
+            if item["merge_problems"]:
+                reasons["cannot_merge"] = {
+                    "code": "cannot_merge",
+                    "severity": "warning",
+                    "problems": item["merge_problems"],
+                }
+
+    def milestones(self, users: list[User]) -> list[dict[str, Any]]:
+        """Active milestones of monitored people's open items, soonest due first."""
+        ids = [u.id for u in users]
+        if not ids:
+            return []
+        rows = self.session.execute(
+            select(WorkItemRecord.milestone_id, WorkItemAssignee.user_id, WorkItemRecord.id)
+            .join(WorkItemAssignee, WorkItemAssignee.work_item_id == WorkItemRecord.id)
+            .where(
+                WorkItemAssignee.user_id.in_(ids),
+                WorkItemAssignee.relation == "assignee",
+                WorkItemRecord.milestone_id.is_not(None),
+                WorkItemRecord.state.in_(OPEN_STATES),
+            )
+        ).all()
+        mine: dict[int, set[int]] = defaultdict(set)
+        people: dict[int, set[int]] = defaultdict(set)
+        for milestone_id, user_id, item_id in rows:
+            if milestone_id is None:  # pragma: no cover - excluded by the query
+                continue
+            mine[milestone_id].add(item_id)
+            people[milestone_id].add(user_id)
+        if not mine:
+            return []
+        found = list(
+            self.session.scalars(
+                select(Milestone).where(Milestone.id.in_(mine), Milestone.state == "active")
+            )
+        )
+        found.sort(key=lambda m: (m.due_date is None, m.due_date or date.max, m.title))
+        found = found[: self.settings.milestones_max]
+        projects = self._projects({m.project_id for m in found if m.project_id is not None})
+        names = {u.id: u.name for u in users}
+        today = self.today()
+        return [
+            {
+                "id": m.id,
+                "title": m.title,
+                "web_url": safe_url(m.web_url, self.settings),
+                "project": _project_payload(m.project_id, projects, self.settings),
+                "group_id": m.group_id,
+                "start_date": m.start_date,
+                "due_date": m.due_date,
+                "days_left": (m.due_date - today).days if m.due_date else None,
+                "monitored_open": len(mine[m.id]),
+                "monitored_people": sorted(names[uid] for uid in people[m.id]),
+                "stats": m.stats,
+                "stats_at": m.stats_at,
+            }
+            for m in found
+        ]
 
     def activity(self, user_ids: list[int]) -> dict[int, dict[str, Any]]:
         events = list(
@@ -361,15 +586,27 @@ class DashboardReader:
             }
         return result
 
-    def cards(self, users: list[User]) -> list[dict[str, Any]]:
+    def overview(self, users: list[User]) -> dict[str, Any]:
+        """Cards plus the cross-person attention list and milestones, reading work once."""
+        work = self.work([u.id for u in users]) if users else {}
+        return {
+            "cards": self.cards(users, work),
+            "attention": self.attention(users, work),
+            "milestones": self.milestones(users),
+        }
+
+    def cards(
+        self, users: list[User], work: dict[int, list[dict[str, Any]]] | None = None
+    ) -> list[dict[str, Any]]:
         ids = [u.id for u in users]
         if not ids:
             return []
         states = self._states(ids)
-        work = self.work(ids)
+        work = self.work(ids) if work is None else work
         activity = self.activity(ids)
         time = self.time(ids)
         contributions = self.contributions(ids, states)
+        today = self.today()
         cards = []
         for user in users:
             items = work.get(user.id, [])
@@ -386,6 +623,19 @@ class DashboardReader:
                         "work_open": sum(1 for i in items if i["state"] in OPEN_STATES),
                         "events_7d": sum(d["total"] for d in user_activity["days"]),
                         "time_seconds_7d": user_time["total_seconds"],
+                        "stalled": sum(
+                            1
+                            for i in items
+                            if i["stalled_days"] is not None and "assignee" in i["relations"]
+                        ),
+                        "overdue": sum(
+                            1
+                            for i in items
+                            if i["state"] in OPEN_STATES
+                            and "assignee" in i["relations"]
+                            and i["due_date"] is not None
+                            and i["due_date"] < today
+                        ),
                     },
                     "work": items,
                     "activity": user_activity["recent"],
