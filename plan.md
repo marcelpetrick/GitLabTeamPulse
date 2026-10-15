@@ -162,6 +162,8 @@ Requested 2026-10-15 after the v0.4.0 release. Branch: `feature/about-and-showca
 
 # Plan — v0.4.2: reviewable alerts, one diagnostics entry
 
+**Status: done, released as v0.4.2 on 2026-10-15.**
+
 Requested 2026-10-15. Branch: `feature/clickable-alerts`.
 
 1. **Stalled / overdue chips open the affected items.** Clicking the red chip on a person's card

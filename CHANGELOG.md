@@ -3,6 +3,23 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.4.2 (2026-10-15): reviewable alerts, one diagnostics entry, faster loads, bug fixes
+
+- **Stalled and overdue chips open the affected items**: a click on a card's chip filters its
+  work table to exactly those items (all of them), scrolls there and links each to GitLab.
+  *Stalled* and *Overdue* are also work-table filters.
+- **One diagnostics entry**: the status bar's "Diagnostics · …" replaces the duplicate warning
+  icon in the top bar.
+- **gzip responses**: the dashboard payload shrinks about 9× (714 KB to 80 KB on real data).
+  Profiling results in [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
+- Fixes from a code audit:
+  - "Refresh now" during a single-person sync was dropped; it is now queued.
+  - A transient error looking up a project hid its name, links and team-report scope for
+    24 hours; only 404/403 are cached now.
+  - Open epics untouched for 30 days dropped out of view, and stored epics could be wiped.
+  - Due dates and report periods showed one day early in browsers west of UTC.
+  - A slow team-report response could overwrite the selected period.
+
 ## 0.4.1 (2026-10-15): About dialog, clearer review signal, diagnostics fix
 
 - **About dialog** (top bar): version, author and contact, license, source link, Python version
