@@ -435,3 +435,62 @@ async def test_epics_that_worked_before_are_kept_while_work_still_refreshes(
         assert any(
             e.operation == "epics" for e in store.list_errors(session, include_resolved=False)
         )
+
+
+async def test_transient_project_lookup_failures_are_retried_next_run(
+    service: SyncService,
+    session_factory: sessionmaker[Session],
+    clock: Clock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gitlab_team_pulse.gitlab.errors import GitLabUnavailableError
+
+    client = service.client()
+    real_get_project = client.get_project
+    failing = {"on": True}
+
+    async def get_project(project_id: int):  # type: ignore[no-untyped-def]
+        if failing["on"]:
+            raise GitLabUnavailableError("server error (503)", status=503)
+        return await real_get_project(project_id)
+
+    monkeypatch.setattr(client, "get_project", get_project)
+    await select_users(service, session_factory, ALEX)
+    await service.sync_selected("scheduled")
+    assert service._project_failures == {}  # not negative-cached
+    with session_factory() as session:
+        assert count(session, Project) == 0
+    failing["on"] = False
+    clock.advance(minutes=10)
+    await service.sync_selected("scheduled")
+    with session_factory() as session:
+        assert count(session, Project) > 0
+
+
+async def test_stalled_open_epics_stay_and_closed_old_ones_go(
+    service: SyncService,
+    session_factory: sessionmaker[Session],
+    fake_app: FastAPI,
+    clock: Clock,
+) -> None:
+    epics = fake_app.state.data.epics
+    alex = next(e for e in epics if e["assignee"] == "alex.berger")
+    old = (clock.now - timedelta(days=90)).isoformat()
+    alex["updatedAt"] = old
+    alex["state"] = "OPEN"
+    closed = {**alex, "id": "gid://gitlab/WorkItem/9999", "iid": 99, "state": "CLOSED"}
+    closed["reference"] = "platform&99"
+    epics.append(closed)
+    await select_users(service, session_factory, ALEX)
+    await service.sync_selected("scheduled")
+    with session_factory() as session:
+        stored = {
+            r.reference
+            for r in session.scalars(select(WorkItemRecord).where(WorkItemRecord.kind == "epic"))
+        }
+    assert alex["reference"] in stored  # open, untouched for 90 days: stalled, still shown
+    assert "platform&99" not in stored  # closed long ago: outside the work window
+
+
+async def test_no_known_group_keeps_the_stored_epics(service: SyncService) -> None:
+    assert await service._epics(service.client(), "alex.berger", [], service.clock()) is None

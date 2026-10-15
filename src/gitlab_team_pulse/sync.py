@@ -21,7 +21,12 @@ from gitlab_team_pulse import retention, store
 from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.freshness import FAILED_STATUSES
 from gitlab_team_pulse.gitlab.client import GitLabClient
-from gitlab_team_pulse.gitlab.errors import GitLabCapabilityError, GitLabError
+from gitlab_team_pulse.gitlab.errors import (
+    GitLabCapabilityError,
+    GitLabError,
+    GitLabForbiddenError,
+    GitLabNotFoundError,
+)
 from gitlab_team_pulse.gitlab.models import (
     ActivityEvent,
     Timelog,
@@ -527,9 +532,12 @@ class SyncService:
             return []
         groups = {i.reference.split("/", 1)[0] for i in items if "/" in i.reference}
         if not groups:
-            return []
+            return None  # no group to ask this run: keep the stored epics (last known good)
         try:
-            epics = await client.get_user_epics(username, groups, cutoff)
+            # All assigned epics, then keep the open ones however old (stalled work must not
+            # drop out of view) and the others updated inside the work window.
+            fetched = await client.get_user_epics(username, groups, None)
+            epics = [e for e in fetched if e.state == "opened" or e.updated_at >= cutoff]
         except GitLabCapabilityError as exc:
             if self.runtime.epics == "available":
                 since = self.runtime.epics_failing_since or now
@@ -854,7 +862,10 @@ class SyncService:
             for pid, result in zip(sorted(missing), results, strict=True):
                 if isinstance(result, BaseException):
                     log.warning("project=%d metadata unavailable: %s", pid, result)
-                    self._project_failures[pid] = now
+                    if isinstance(result, GitLabNotFoundError | GitLabForbiddenError):
+                        # Deleted or inaccessible: do not ask again before the retention period.
+                        # Transient failures (timeouts, 5xx) are retried on the next run.
+                        self._project_failures[pid] = now
                     continue
                 self._project_failures.pop(pid, None)
                 store.upsert_project(session, result, now)

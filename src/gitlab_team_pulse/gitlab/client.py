@@ -446,7 +446,7 @@ class GitLabClient:
         return result
 
     async def get_user_epics(
-        self, username: str, group_paths: set[str], updated_after: datetime
+        self, username: str, group_paths: set[str], updated_after: datetime | None
     ) -> list[WorkItem]:
         """Epics assigned to ``username`` in the given top-level groups (and their subgroups).
 
@@ -462,7 +462,7 @@ class GitLabClient:
                     {
                         "fullPath": path,
                         "username": username,
-                        "updatedAfter": updated_after.isoformat(),
+                        "updatedAfter": updated_after.isoformat() if updated_after else None,
                         "after": cursor,
                     },
                 )
