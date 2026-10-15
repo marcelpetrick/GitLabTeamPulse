@@ -6,24 +6,29 @@ import { DashboardView } from "./js/dashboard.js";
 import { Diagnostics } from "./js/diagnostics.js";
 import { PeopleView } from "./js/people.js";
 import { renderStatusbar } from "./js/statusbar.js";
+import { TeamsView } from "./js/teams.js";
 import { tickRelativeTimes, toast } from "./js/ui.js";
 
 const FAST_POLL_MS = 2000;
-const VIEWS = ["dashboard", "people"];
+const VIEWS = ["dashboard", "teams", "people"];
+const TITLES = { dashboard: "Dashboard", teams: "Teams", people: "People" };
 
 class App {
   constructor() {
     this.status = null;
     this.users = null;
     this.dashboard = null;
+    this.teams = null;
     this.loadedVersion = { users: -1, dashboard: -1 };
     this.dataVersion = null;
     this.usersVersion = null;
+    this.teamsVersion = null;
     this.offline = false;
     this.view = null;
     this.pollTimer = null;
     this.peopleView = new PeopleView(document.getElementById("view-people"), this);
     this.dashboardView = new DashboardView(document.getElementById("view-dashboard"), this);
+    this.teamsView = new TeamsView(document.getElementById("view-teams"), this);
     this.diagnostics = new Diagnostics(this);
   }
 
@@ -82,17 +87,34 @@ class App {
       if (name === view) tab.setAttribute("aria-current", "page");
       else tab.removeAttribute("aria-current");
     }
-    document.title = `${view === "people" ? "People" : "Dashboard"} · GitLab Team Pulse`;
+    document.title = `${TITLES[view]} · GitLab Team Pulse`;
     this.renderView();
     await this.loadViewData();
   }
 
   renderView() {
     if (this.view === "people") this.peopleView.render();
+    else if (this.view === "teams") this.teamsView.render();
     else if (this.view === "dashboard") this.dashboardView.render();
   }
 
+  async reloadTeams() {
+    try {
+      this.teams = await api.teams();
+      this.teamsVersion = this.teams.teams_version;
+      this.renderChrome();
+      if (this.view === "teams" || this.view === "dashboard") this.renderView();
+    } catch (error) {
+      toast(`Could not load teams: ${error.message}`, "error");
+    }
+  }
+
   async loadViewData(force = false) {
+    if (this.view === "teams") {
+      if (force || !this.teams) await this.reloadTeams();
+      else this.teamsView.onData();
+      return;
+    }
     const key = this.view === "people" ? "users" : "dashboard";
     const version = key === "users" ? this.usersVersion : this.dataVersion;
     if (!force && this.loadedVersion[key] === version && this[key]) return;
@@ -122,12 +144,15 @@ class App {
         ? this.usersVersion !== status.users_version
         : this.dataVersion !== status.data_version;
       const anyChange = changed || this.dataVersion !== status.data_version;
+      const teamsChanged = this.teamsVersion !== status.teams_version;
       this.dataVersion = status.data_version;
       this.usersVersion = status.users_version;
+      if (teamsChanged) await this.reloadTeams();
+      else if (this.view === "teams" && changed) this.teamsView.onData();
       this.renderChrome();
       this.dashboardView.onStatus(status);
       // Before the first route() there is no view yet; show() loads the right data itself.
-      if ((changed || wasOffline) && this.view) await this.loadViewData();
+      if ((changed || wasOffline) && this.view && this.view !== "teams") await this.loadViewData();
       if (anyChange && this.diagnostics.isOpen) this.diagnostics.load();
       if (!changed && this.view === "dashboard") this.dashboardView.updateRefreshButton();
     } catch {
@@ -152,6 +177,10 @@ class App {
     const peopleCount = document.getElementById("tab-people-count");
     peopleCount.hidden = this.status.users.selected === 0;
     peopleCount.textContent = String(this.status.users.selected);
+    const teamsCount = document.getElementById("tab-teams-count");
+    const teams = this.teams?.teams?.length || 0;
+    teamsCount.hidden = teams === 0;
+    teamsCount.textContent = String(teams);
     if (this.view === "dashboard" && this.dashboard) {
       // Keep the header freshness pill current without refetching the whole dashboard.
       this.dashboard.status = this.status;

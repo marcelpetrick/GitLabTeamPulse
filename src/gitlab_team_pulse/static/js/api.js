@@ -40,4 +40,12 @@ export const api = {
   errors: (includeResolved) => request("GET", `/api/errors?include_resolved=${includeResolved ? "true" : "false"}`),
   select: (id, selected) => request("PATCH", `/api/users/${encodeURIComponent(id)}/selection`, { selected }),
   refresh: () => request("POST", "/api/refresh"),
+  teams: () => request("GET", "/api/teams"),
+  createTeam: (team) => request("POST", "/api/teams", team),
+  updateTeam: (id, team) => request("PUT", `/api/teams/${encodeURIComponent(id)}`, team),
+  deleteTeam: (id) => request("DELETE", `/api/teams/${encodeURIComponent(id)}`),
+  applyTeam: (id) => request("POST", `/api/teams/${encodeURIComponent(id)}/apply`),
+  teamReport: (id, period, offset) => request("GET", `/api/teams/${encodeURIComponent(id)}/report?period=${encodeURIComponent(period)}&offset=${encodeURIComponent(offset)}`),
+  teamDigest: (id) => request("GET", `/api/teams/${encodeURIComponent(id)}/digest`),
+  projects: () => request("GET", "/api/projects"),
 };

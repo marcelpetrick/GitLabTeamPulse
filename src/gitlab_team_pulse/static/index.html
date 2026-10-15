@@ -24,6 +24,9 @@
       <button type="button" class="tab" data-view="dashboard" id="tab-dashboard">
         Dashboard
       </button>
+      <button type="button" class="tab" data-view="teams" id="tab-teams">
+        Teams <span class="tab-count" id="tab-teams-count" hidden></span>
+      </button>
       <button type="button" class="tab" data-view="people" id="tab-people">
         People <span class="tab-count" id="tab-people-count" hidden></span>
       </button>
@@ -46,6 +49,7 @@
 
   <main id="main" tabindex="-1">
     <section id="view-dashboard" class="view" aria-labelledby="dashboard-title" hidden></section>
+    <section id="view-teams" class="view" aria-labelledby="teams-title" hidden></section>
     <section id="view-people" class="view" aria-labelledby="people-title" hidden></section>
   </main>
 

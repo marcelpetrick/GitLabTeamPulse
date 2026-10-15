@@ -1,6 +1,7 @@
 // Dashboard view: one dense card per selected user, rendered from the local cache.
 
 import { api } from "./api.js";
+import { AttentionPanel, MilestonesPanel } from "./attention.js";
 import { activityChart, timeChart } from "./charts.js";
 import { Skyline, defaultView, formatDay, heatmap, legend } from "./contributions.js";
 import { clear, h, icon, s, safeLink } from "./dom.js";
@@ -33,6 +34,31 @@ function typeLabel(item) {
   return type.charAt(0).toUpperCase() + type.slice(1).replace("_", " ");
 }
 
+function matchesFilter(item, filter) {
+  if (filter === "open") return OPEN.has(item.state);
+  if (filter === "done") return !OPEN.has(item.state);
+  if (filter === "unestimated") return OPEN.has(item.state) && item.kind === "issue" && !item.time_estimate;
+  return true;
+}
+
+/** "spent / estimate" with an overrun marker; only facts GitLab tracks, nothing inferred. */
+function timeChip(item) {
+  const estimate = item.time_estimate || 0;
+  const spent = item.time_spent || 0;
+  if (!estimate && !spent) {
+    return item.kind === "issue" && OPEN.has(item.state)
+      ? h("span", { class: "time-chip none", title: "No time estimate in GitLab" }, "no estimate")
+      : h("span", { class: "muted" }, "—");
+  }
+  const over = estimate > 0 && spent > estimate;
+  const title = estimate
+    ? `${formatDuration(spent)} spent of ${formatDuration(estimate)} estimated${over ? ` (${Math.round((spent / estimate) * 100)}%)` : ""}`
+    : `${formatDuration(spent)} spent, no estimate`;
+  return h("span", { class: `time-chip${over ? " over" : ""}`, title },
+    over ? icon("warning") : null,
+    estimate ? `${formatDuration(spent)} / ${formatDuration(estimate)}` : `${formatDuration(spent)} / —`);
+}
+
 function labelChip(label) {
   const [scope, value] = label.includes("::") ? label.split("::", 2) : [null, label];
   return h("span", { class: "label-chip" }, scope ? [h("span", { class: "scope" }, `${scope}::`), value] : label);
@@ -50,6 +76,8 @@ export class DashboardView {
     this.app = app;
     this.cardState = new Map(); // per user: sort, state filter, expansion flags, calendar view and 3D angle
     this.refreshing = false;
+    this.attention = new AttentionPanel();
+    this.milestones = new MilestonesPanel();
   }
 
   uiState(userId) {
@@ -75,6 +103,7 @@ export class DashboardView {
       h("div", { class: "spacer" }),
       h("div", { class: "toolbar" },
         selected ? freshnessPill(selected, { label: "Selected users data" }) : null,
+        this.teamSelect(),
         this.refreshButton));
     const nodes = [head];
     if (selected && (selected.status === "error" || selected.status === "stale" || (selected.status === "refreshing" && selected.stale))) {
@@ -89,9 +118,33 @@ export class DashboardView {
         h("button", { type: "button", class: "button primary", onclick: () => this.app.navigate("people") }, icon("users"), "Choose people")));
     } else {
       const today = todayIso(data.timezone);
+      if (data.attention) nodes.push(this.attention.render(data.attention, data.cards.length));
+      const milestones = this.milestones.render(data.milestones);
+      if (milestones) nodes.push(milestones);
       nodes.push(h("div", { class: "cards" }, data.cards.map((card) => this.card(card, today))));
     }
     this.root.replaceChildren(...nodes);
+  }
+
+  teamSelect() {
+    const teams = this.app.teams?.teams || [];
+    if (teams.length === 0) return null;
+    return h("select", {
+      class: "select", "aria-label": "Show a team on the dashboard", id: "apply-team",
+      onchange: async (event) => {
+        const team = teams.find((t) => String(t.id) === event.target.value);
+        event.target.value = "";
+        if (!team) return;
+        if (!window.confirm(`Show team "${team.name}" on the dashboard? This replaces the shared selection for everyone (${plural(team.members.length, "person", "people")}).`)) return;
+        try {
+          const result = await api.applyTeam(team.id);
+          toast(`Showing ${team.name}: ${plural(result.selected, "person", "people")} monitored.`);
+          this.app.onSelectionChanged();
+        } catch (error) {
+          toast(`Could not show the team: ${error.message}`, "error");
+        }
+      },
+    }, h("option", { value: "" }, "Show team…"), teams.map((team) => h("option", { value: String(team.id) }, team.name)));
   }
 
   banner(info) {
@@ -170,6 +223,8 @@ export class DashboardView {
             h("span", { class: "username" }, safeLink(user.web_url, `@${user.username}`)),
             freshnessPill(freshness, { small: true, label: `${user.name} data` }))),
         h("div", { class: "stats" },
+          counts.stalled ? this.alertStat(counts.stalled, "stalled", `Open items without any update for ${this.app.dashboard?.attention?.stalled_days || 7}+ days`) : null,
+          counts.overdue ? this.alertStat(counts.overdue, "overdue", "Open items past their due date") : null,
           this.stat(counts.work_total, "work items", `${counts.work_open} open`),
           this.stat(counts.events_7d, "actions · 7 days"),
           this.stat(formatDuration(counts.time_seconds_7d), "logged · 7 days", null, lowTime))));
@@ -195,6 +250,12 @@ export class DashboardView {
     return h("div", { class: `stat${warn ? " warn" : ""}`, title: warn ? "No time logged in GitLab during the last 7 days" : null },
       h("span", { class: "value" }, warn ? [icon("warning"), " ", String(value)] : String(value)),
       h("span", { class: "label" }, extra ? `${label} · ${extra}` : label));
+  }
+
+  alertStat(value, label, title) {
+    return h("div", { class: "stat alert", title, dataset: { alert: label } },
+      h("span", { class: "value" }, icon("warning"), " ", String(value)),
+      h("span", { class: "label" }, label));
   }
 
   activityPanel(card, state) {
@@ -318,7 +379,7 @@ export class DashboardView {
     const section = h("section", { class: "work", "aria-label": "Assigned and recently relevant work" });
     const body = h("div", {});
     const filterGroup = h("div", { class: "chip-group small", role: "group", "aria-label": "Work state filter" },
-      [["all", "All"], ["open", "Open"], ["done", "Closed / merged"]].map(([key, label]) =>
+      [["all", "All"], ["open", "Open"], ["done", "Closed / merged"], ["unestimated", "No estimate"]].map(([key, label]) =>
         h("button", {
           type: "button", "aria-pressed": String(state.filter === key), dataset: { filter: key },
           onclick: () => {
@@ -336,7 +397,7 @@ export class DashboardView {
 
     const renderTable = () => {
       const items = card.work
-        .filter((w) => state.filter === "all" || (state.filter === "open" ? OPEN.has(w.state) : !OPEN.has(w.state)))
+        .filter((w) => matchesFilter(w, state.filter))
         .sort(WORK_SORTS[state.sort][1]);
       heading.textContent = `Work · ${items.length} of ${card.work.length} items`;
       clear(body);
@@ -347,11 +408,12 @@ export class DashboardView {
       const shown = state.allWork ? items : items.slice(0, WORK_ROWS);
       const todayStr = new Date().toISOString().slice(0, 10);
       body.append(h("div", { class: "table-scroll" }, h("table", { class: "work-table" },
-        h("thead", {}, h("tr", {}, ["Type", "Title", "Project", "State", "Milestone", "Due", "Updated"].map((c) => h("th", { scope: "col" }, c)))),
+        h("thead", {}, h("tr", {}, ["Type", "Title", "Project", "State", "Milestone", "Time", "Due", "Updated"].map((c) => h("th", { scope: "col" }, c)))),
         h("tbody", {}, shown.map((item) => {
           const [stateText, stateCls] = STATE_BADGE[item.state] || [item.state, ""];
           const overdue = item.due_date && item.due_date < todayStr && OPEN.has(item.state);
-          return h("tr", { dataset: { kind: item.kind, state: item.state } },
+          const stalled = item.stalled_days !== null && item.stalled_days !== undefined && item.relations.includes("assignee");
+          return h("tr", { class: stalled ? "is-stalled" : null, dataset: { kind: item.kind, state: item.state } },
             h("td", { class: "nowrap" },
               h("span", { class: `badge ${item.kind === "merge_request" ? "accent" : "outline"}` }, typeLabel(item)),
               item.relations.includes("reviewer") ? h("div", {}, h("span", { class: "badge info" }, "Reviewer")) : null),
@@ -363,8 +425,10 @@ export class DashboardView {
             h("td", { class: "nowrap" }, h("span", { class: `badge ${stateCls}` }, stateText),
               item.priority ? h("div", {}, h("span", { class: "label-chip" }, `priority ${item.priority}`)) : null),
             h("td", {}, item.milestone || h("span", { class: "muted" }, "—")),
+            h("td", { class: "nowrap" }, timeChip(item)),
             h("td", { class: `nowrap${overdue ? " overdue" : ""}` }, item.due_date ? [formatDate(item.due_date), overdue ? " · overdue" : ""] : h("span", { class: "muted" }, "—")),
-            h("td", { class: "nowrap" }, rel(item.updated_at)));
+            h("td", { class: "nowrap" }, rel(item.updated_at),
+              stalled ? h("div", { class: "stalled-note" }, icon("warning"), ` no update for ${item.stalled_days} d`) : null));
         })))));
       if (items.length > WORK_ROWS) {
         body.append(h("button", {
