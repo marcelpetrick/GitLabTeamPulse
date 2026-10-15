@@ -157,3 +157,21 @@ Requested 2026-10-15 after the v0.4.0 release. Branch: `feature/about-and-showca
    release.
 7. Tests (API and browser), full pipeline, `/reviewBranch`, fixes, changelog, v0.4.1 release,
    restart the dashboard and show it in Firefox.
+
+---
+
+# Plan — v0.4.2: reviewable alerts, one diagnostics entry
+
+Requested 2026-10-15. Branch: `feature/clickable-alerts`.
+
+1. **Stalled / overdue chips open the affected items.** Clicking the red chip on a person's card
+   filters that card's work table to exactly those items (all rows, not only the first ten),
+   scrolls it into view and focuses it; each row links to GitLab. "Stalled" and "Overdue" are
+   also regular work-table filters. The table's overdue marker uses the dashboard's local day,
+   like the server's counts (it used the browser's UTC date before).
+2. **One diagnostics entry instead of two.** The warning icon with a counter in the top bar and
+   the "No problems" link in the status bar opened the same drawer. Keep the status-bar entry
+   (text and colour, next to the freshness facts), labelled "Diagnostics · …"; remove the
+   top-bar icon. The outage banner keeps its contextual "View diagnostics" button.
+3. Browser tests, screenshots and docs updated; full pipeline; `/reviewBranch`; release v0.4.2;
+   CI green; dashboard restarted and shown in Firefox.

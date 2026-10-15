@@ -36,10 +36,14 @@ export function renderStatusbar(app) {
   left.replaceChildren(crawlerItem, last, attempt, ...(next ? [next] : []));
 
   const unresolved = status.errors.unresolved;
+  // The single entry point to the diagnostics drawer (crawler, upstream and problem details).
   const problems = h("button", {
     type: "button", class: `link-button status-item${unresolved ? " err" : ""}`, id: "status-problems",
+    "aria-haspopup": "dialog", "aria-controls": "diagnostics", title: "Open diagnostics",
     onclick: () => app.openDiagnostics(),
-  }, unresolved ? [icon("warning"), `${unresolved} ${unresolved === 1 ? "problem" : "problems"}`] : [icon("check"), "No problems"]);
+  }, unresolved
+    ? [icon("warning"), `Diagnostics · ${unresolved} ${unresolved === 1 ? "problem" : "problems"}`]
+    : [icon("check"), "Diagnostics · no problems"]);
   right.replaceChildren(
     h("span", { class: "status-item", title: `Directory: ${exactTime(status.directory.last_success_at)}` }, "Directory ", rel(status.directory.last_success_at)),
     problems,

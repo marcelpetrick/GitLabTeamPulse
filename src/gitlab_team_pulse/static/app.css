@@ -161,12 +161,6 @@ button, input, select { font: inherit; color: inherit; }
 .icon-button:hover { background: var(--surface-2); color: var(--text); }
 .icon-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 :root[data-theme="dark"] .icon-moon, :root[data-theme="light"] .icon-sun { display: none; }
-.badge-count {
-  position: absolute; top: 2px; right: 1px; min-width: 17px; height: 17px; padding: 0 4px;
-  border-radius: 999px; background: var(--err); color: #fff; font-size: 0.7rem; font-weight: 700;
-  display: grid; place-items: center; line-height: 1;
-}
-.badge-count.is-warning { background: var(--warn); }
 
 /* ---------------------------------------------------------------- layout */
 main { max-width: 1480px; margin: 0 auto; padding: 24px; outline: none; }
@@ -688,3 +682,10 @@ main { max-width: 1480px; margin: 0 auto; padding: 24px; outline: none; }
 .about-deps th { text-align: left; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); padding: 4px 8px 4px 0; border-bottom: 1px solid var(--border-strong); }
 .about-deps td { padding: 4px 8px 4px 0; border-bottom: 1px solid var(--border); }
 .about-note { font-size: 0.84rem; margin-top: 12px; }
+
+/* ---------------------------------------------------------------- clickable alert chips */
+button.stat.alert { border: 0; font: inherit; text-align: left; cursor: pointer; }
+button.stat.alert:hover { background: color-mix(in srgb, var(--err) 18%, var(--err-weak)); }
+button.stat.alert:focus-visible { outline: 2px solid var(--err); outline-offset: 2px; }
+.work { scroll-margin-top: calc(var(--topbar-h) + 12px); }
+.work h3:focus { outline: none; }

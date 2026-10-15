@@ -38,7 +38,6 @@ class App {
     for (const tab of document.querySelectorAll(".tab")) {
       tab.addEventListener("click", () => this.navigate(tab.dataset.view));
     }
-    document.getElementById("open-diagnostics").addEventListener("click", () => this.openDiagnostics());
     this.setupTheme();
     window.addEventListener("hashchange", () => this.route());
     document.addEventListener("keydown", (event) => {
@@ -172,10 +171,6 @@ class App {
 
   renderChrome() {
     renderStatusbar(this);
-    const count = document.getElementById("diagnostics-count");
-    const unresolved = this.status.errors.unresolved;
-    count.hidden = unresolved === 0;
-    count.textContent = String(unresolved);
     const peopleCount = document.getElementById("tab-people-count");
     peopleCount.hidden = this.status.users.selected === 0;
     peopleCount.textContent = String(this.status.users.selected);

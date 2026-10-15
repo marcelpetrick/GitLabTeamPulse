@@ -109,7 +109,7 @@ def main() -> None:
                 page.wait_for_selector(".card .work-table")
                 page.click("#refresh-now")
                 page.wait_for_selector(".banner.err", timeout=30000)
-                page.click("#open-diagnostics")
+                page.click("#status-problems")
                 page.wait_for_selector(".diag-item")
                 page.screenshot(path=OUT / "outage-diagnostics.png")
                 browser.close()

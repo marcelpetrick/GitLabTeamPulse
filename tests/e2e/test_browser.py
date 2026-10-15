@@ -117,7 +117,10 @@ def test_outage_marks_stale_error_and_keeps_data(page: Page, stack: LiveStack) -
     expect(banner).to_contain_text("Showing cached data")
     expect(card.locator(".work-table tbody tr")).to_have_count(rows)
     expect(card.locator(".pill.error")).to_be_visible()
-    expect(page.locator("#diagnostics-count")).to_be_visible()
+    expect(page.locator("#status-problems")).to_contain_text(
+        re.compile(r"Diagnostics · \d+ problems?")
+    )
+    expect(page.locator("#open-diagnostics")).to_have_count(0)  # one entry point only
     page.click("#status-problems")
     drawer = page.locator("#diagnostics")
     expect(drawer).to_be_visible()
@@ -129,7 +132,7 @@ def test_outage_marks_stale_error_and_keeps_data(page: Page, stack: LiveStack) -
     page.wait_for_timeout(1100)
     page.click("#refresh-now")
     expect(banner).to_be_hidden(timeout=30000)
-    expect(page.locator("#status-problems")).to_contain_text("No problems")
+    expect(page.locator("#status-problems")).to_contain_text("Diagnostics · no problems")
 
 
 def test_empty_dashboard_links_to_people(page: Page, stack: LiveStack) -> None:
@@ -289,3 +292,27 @@ def test_about_dialog(page: Page, stack: LiveStack) -> None:
     expect(dialog.locator(".about-deps tbody tr", has_text="fastapi")).to_be_visible()
     page.keyboard.press("Escape")
     expect(dialog).to_be_hidden()
+
+
+ROW_CHECKS = {
+    "stalled": "row => row.classList.contains('is-stalled')",
+    "overdue": "row => row.querySelector('td.overdue') !== null",
+}
+
+
+@pytest.mark.parametrize("alert", ["stalled", "overdue"])
+def test_alert_chips_open_the_affected_items(page: Page, stack: LiveStack, alert: str) -> None:
+    select_alex(page, stack)
+    page.click("#tab-dashboard")
+    card = page.locator(f'article.card[data-user-id="{ALEX}"]')
+    chip = card.locator(f'button[data-alert="{alert}"]')
+    expect(chip).to_be_visible(timeout=30000)
+    expected = int(chip.locator(".value").inner_text().strip())
+    chip.click()
+    expect(card.locator(f'.work [data-filter="{alert}"]')).to_have_attribute("aria-pressed", "true")
+    rows = card.locator(".work-table tbody tr")
+    expect(rows).to_have_count(expected)  # every affected item, not just the first ten
+    assert all(rows.evaluate_all(f"rows => rows.map({ROW_CHECKS[alert]})"))
+    heading = card.locator(".work h3")
+    expect(heading).to_contain_text(f"{expected} of")
+    expect(heading).to_be_in_viewport()
