@@ -191,3 +191,22 @@ Requested 2026-10-15. Branch: `feature/clickable-alerts`.
   person. Use a second, open-only GraphQL query (like issues and MRs) once the `state` filter
   of `group.workItems` is verified on the target GitLab version. GitLab Free is not affected.
 - Python 3.15 (released 2026-10-09) for the Docker image and CI.
+
+---
+
+# Plan — v0.4.3: tooltips everywhere
+
+Requested 2026-10-15: every element should explain itself on hover, so users can find out what
+something means without documentation. Branch: `feature/tooltips`.
+
+1. **Inventory**: a browser script lists every visible control (buttons, selects, inputs,
+   links, checkboxes) and every information element (stats, pills, badges, chips, KPI tiles,
+   attention tiles and reasons, milestone parts, table headers, status-bar items) without a
+   tooltip, in all views (Dashboard, Teams, People) and dialogs (Diagnostics, About, team
+   editor).
+2. **Tooltips**: add a native `title` with a short explanation of what the element is, how it
+   is counted and what clicking does; links say where they go (GitLab, e-mail). Charts and the
+   calendar keep their richer custom tooltips.
+3. **Guard**: the inventory becomes a browser test that fails when a visible element has no
+   tooltip, so new UI cannot regress.
+4. Pipeline, `/reviewBranch`, release v0.4.3, CI green, dashboard restarted.
