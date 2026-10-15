@@ -235,7 +235,6 @@ class DashboardReader:
         self.settings = settings
         self.runtime = runtime
         self.now = now
-        self._names: dict[str, str] = {}
 
     def _projects(self, ids: set[int]) -> dict[int, Project]:
         if not ids:
@@ -313,12 +312,12 @@ class DashboardReader:
         today = self.today()
         monitored = {u.username for u in users}
         reviewers = {r for items in work.values() for i in items for r in i["reviewers"]}
-        self._names = {}
+        names: dict[str, str] = {}
         if reviewers:
-            rows_found = self.session.execute(
+            found = self.session.execute(
                 select(User.username, User.name).where(User.username.in_(reviewers))
             ).all()
-            self._names = {row.username: row.name for row in rows_found}
+            names = {row.username: row.name for row in found}
         rows: dict[int, dict[str, Any]] = {}
         for user in users:
             for item in work.get(user.id, []):
@@ -334,7 +333,7 @@ class DashboardReader:
                 row["people"].append(
                     {"username": user.username, "name": user.name, "relations": item["relations"]}
                 )
-                self._reasons(row["reasons"], item, monitored, today)
+                self._reasons(row["reasons"], item, monitored, names, today)
         items = []
         for row in rows.values():
             if not row["reasons"]:
@@ -363,6 +362,7 @@ class DashboardReader:
         reasons: dict[str, dict[str, Any]],
         item: dict[str, Any],
         monitored: set[str],
+        names: dict[str, str],
         today: date,
     ) -> None:
         relations = item["relations"]
@@ -397,7 +397,7 @@ class DashboardReader:
                         "code": "unmonitored_reviewer",
                         "severity": "info",
                         "reviewers": [
-                            {"username": name, "name": self._names.get(name, name)}
+                            {"username": name, "name": names.get(name, name)}
                             for name in sorted(reviewers)
                         ],
                     }
