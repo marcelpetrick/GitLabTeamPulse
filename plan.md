@@ -173,5 +173,11 @@ Requested 2026-10-15. Branch: `feature/clickable-alerts`.
    the "No problems" link in the status bar opened the same drawer. Keep the status-bar entry
    (text and colour, next to the freshness facts), labelled "Diagnostics · …"; remove the
    top-bar icon. The outage banner keeps its contextual "View diagnostics" button.
-3. Browser tests, screenshots and docs updated; full pipeline; `/reviewBranch`; release v0.4.2;
+3. **Profiling**: measure startup, a full sync run (real instance log and fake GitLab with
+   simulated latency) and the API reads on a copy of the real database; find what is slow or
+   could run in parallel; fix the worthwhile items; document the numbers in
+   `docs/PERFORMANCE.md`.
+4. **Bug audit**: a read-only audit of the whole code base (not only recent diffs) for real,
+   confirmed bugs; fix them, with tests.
+5. Browser tests, screenshots and docs updated; full pipeline; `/reviewBranch`; release v0.4.2;
    CI green; dashboard restarted and shown in Firefox.
