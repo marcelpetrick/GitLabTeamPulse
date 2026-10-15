@@ -279,3 +279,15 @@ def test_users_version_only_moves_with_directory_and_selection(
     after_sync = client.get("/api/status").json()
     assert after_sync["users_version"] == users_version + 1  # activity sync leaves it alone
     assert after_sync["data_version"] > after_select["data_version"]
+
+
+def test_large_responses_are_compressed(api: tuple[TestClient, AppContext]) -> None:
+    client, context = api
+    sync_all(client, context)
+    client.patch(f"/api/users/{ALEX}/selection", json={"selected": True})
+    sync_all(client, context)
+    compressed = client.get("/api/dashboard", headers={"Accept-Encoding": "gzip"})
+    assert compressed.headers["content-encoding"] == "gzip"
+    assert compressed.headers["content-security-policy"]  # security headers still apply
+    plain = client.get("/api/dashboard", headers={"Accept-Encoding": "identity"})
+    assert "content-encoding" not in plain.headers

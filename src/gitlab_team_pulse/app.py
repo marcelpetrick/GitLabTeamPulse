@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, Response
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -120,6 +121,9 @@ def create_app(
             response.headers["Cache-Control"] = "no-store"
         return response
 
+    # The dashboard payload is large and repetitive JSON (about 10x smaller compressed); it is
+    # refetched on every data change, so compression matters for browsers on a VPN.
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
     app.include_router(api_router())
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
