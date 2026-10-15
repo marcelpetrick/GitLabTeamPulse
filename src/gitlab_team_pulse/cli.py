@@ -186,8 +186,22 @@ async def _seed_demo(settings: Settings, select: int) -> None:
                     for u in store.list_users(session)
                     if u.account_type == "human" and u.state == "active"
                 ]
-                for user in sorted(humans, key=lambda u: u.id)[1 : select + 1]:
+                chosen = sorted(humans, key=lambda u: u.id)[1 : select + 1]
+                for user in chosen:
                     store.set_selected(session, user.id, True, service.clock())
+                if not store.list_teams(session):
+                    # A sample team: the monitored people plus one more, scoped to a namespace.
+                    extra = sorted(humans, key=lambda u: u.id)[select + 1 : select + 2]
+                    store.save_team(
+                        session,
+                        None,
+                        name="Platform",
+                        description="API, web and infrastructure",
+                        member_ids=[u.id for u in [*chosen, *extra]],
+                        scopes=["platform"],
+                        now=service.clock(),
+                    )
+                    store.bump_teams_version(session)
                 store.bump_data_version(session)
                 store.bump_users_version(session)
                 session.commit()
@@ -211,6 +225,7 @@ def demo_settings(args: argparse.Namespace) -> Settings:
         port=args.port,
         selected_refresh_interval_seconds=args.refresh_seconds,
         manual_refresh_min_interval_seconds=3,
+        team_person_breakdown=True,  # synthetic people: the demo shows every feature
     )
 
 

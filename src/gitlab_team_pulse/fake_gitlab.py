@@ -304,6 +304,20 @@ def enrich(data: FakeData, people: list[dict[str, Any]], rng: random.Random) -> 
         mr["has_conflicts"] = status == "conflict"
         mr["blocking_discussions_resolved"] = status != "discussions_not_resolved"
         mr["time_stats"] = {"time_estimate": 0, "total_time_spent": 0}
+    # One project whose merge requests only the first person works on, so the knowledge-spread
+    # view has a single-person project to point out.
+    solo, elsewhere = 3, 5  # platform/infra, docs/handbook
+    owner = people[0]["username"]
+    for event in data.events:
+        if (
+            event["project_id"] == solo
+            and event["author_id"] != people[0]["id"]
+            and (event.get("target_type") == "MergeRequest" or event.get("note"))
+        ):
+            event["project_id"] = elsewhere
+    for mr in data.merge_requests:
+        if mr["project_id"] == solo and mr["author"]["username"] != owner:
+            mr["project_id"] = elsewhere
     item_id = 5000
     for index, user in enumerate(people):
         others = [u for u in people if u is not user]
@@ -368,7 +382,7 @@ def enrich(data: FakeData, people: list[dict[str, Any]], rng: random.Random) -> 
                 {
                     "id": item_id,
                     "iid": 500 + item_id % 400,
-                    "project_id": rng.choice(list(data.projects)[:4]),
+                    "project_id": solo if index == 0 else rng.choice([1, 2, 4]),
                     "title": rng.choice(MR_TITLES).removeprefix("Draft: "),
                     "state": "merged",
                     "draft": False,
