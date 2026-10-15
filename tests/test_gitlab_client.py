@@ -312,7 +312,8 @@ async def test_get_milestone_issues_for_project_and_group_milestones(
     )
     assert len(await client.get_milestone_issues(7, project_id=3, group_id=None)) == 1
     assert len(await client.get_milestone_issues(8, project_id=None, group_id=4)) == 2
-    assert project.called and group.called
+    assert project.called
+    assert group.called
     with pytest.raises(GitLabResponseError):
         await client.get_milestone_issues(9, project_id=None, group_id=None)
 
