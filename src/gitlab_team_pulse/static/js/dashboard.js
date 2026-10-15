@@ -34,10 +34,21 @@ function typeLabel(item) {
   return type.charAt(0).toUpperCase() + type.slice(1).replace("_", " ");
 }
 
-function matchesFilter(item, filter) {
+/** Stalled and overdue count only work assigned to the person, exactly like the card chips. */
+function isStalled(item) {
+  return item.stalled_days !== null && item.stalled_days !== undefined && item.relations.includes("assignee");
+}
+
+function isOverdue(item, today) {
+  return Boolean(item.due_date) && item.due_date < today && OPEN.has(item.state);
+}
+
+function matchesFilter(item, filter, today) {
   if (filter === "open") return OPEN.has(item.state);
   if (filter === "done") return !OPEN.has(item.state);
   if (filter === "unestimated") return OPEN.has(item.state) && item.kind === "issue" && !item.time_estimate;
+  if (filter === "stalled") return isStalled(item);
+  if (filter === "overdue") return isOverdue(item, today) && item.relations.includes("assignee");
   return true;
 }
 
@@ -223,8 +234,8 @@ export class DashboardView {
             h("span", { class: "username" }, safeLink(user.web_url, `@${user.username}`)),
             freshnessPill(freshness, { small: true, label: `${user.name} data` }))),
         h("div", { class: "stats" },
-          counts.stalled ? this.alertStat(counts.stalled, "stalled", `Open items without any update for ${this.app.dashboard?.attention?.stalled_days || 7}+ days`) : null,
-          counts.overdue ? this.alertStat(counts.overdue, "overdue", "Open items past their due date") : null,
+          counts.stalled ? this.alertStat(user, counts.stalled, "stalled", `Open items without any update for ${this.app.dashboard?.attention?.stalled_days || 7}+ days — click to list them`) : null,
+          counts.overdue ? this.alertStat(user, counts.overdue, "overdue", "Open items past their due date — click to list them") : null,
           this.stat(counts.work_total, "work items", `${counts.work_open} open`),
           this.stat(counts.events_7d, "actions · 7 days"),
           this.stat(formatDuration(counts.time_seconds_7d), "logged · 7 days", null, lowTime))));
@@ -242,7 +253,7 @@ export class DashboardView {
           activityChart(card.activity_days, today)),
         this.timePanel(card, state, today)),
       this.contributionPanel(card, state),
-      this.workPanel(card, state));
+      this.workPanel(card, state, today));
     return article;
   }
 
@@ -252,10 +263,27 @@ export class DashboardView {
       h("span", { class: "label" }, extra ? `${label} · ${extra}` : label));
   }
 
-  alertStat(value, label, title) {
-    return h("div", { class: "stat alert", title, dataset: { alert: label } },
-      h("span", { class: "value" }, icon("warning"), " ", String(value)),
-      h("span", { class: "label" }, label));
+  alertStat(user, value, label, title) {
+    return h("button", {
+      type: "button", class: "stat alert", title, dataset: { alert: label },
+      "aria-label": `Show the ${value} ${label} items of ${user.name}`,
+      onclick: () => this.showWork(user.id, label),
+    },
+    h("span", { class: "value" }, icon("warning"), " ", String(value)),
+    h("span", { class: "label" }, label));
+  }
+
+  /** Filter one person's work table to the given kind (all rows) and bring it into view. */
+  showWork(userId, filter) {
+    const state = this.uiState(userId);
+    state.filter = filter;
+    state.allWork = true;
+    this.render();
+    const work = this.root.querySelector(`article.card[data-user-id="${userId}"] .work`);
+    if (!work) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    work.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+    work.querySelector("h3")?.focus({ preventScroll: true });
   }
 
   activityPanel(card, state) {
@@ -375,11 +403,11 @@ export class DashboardView {
     return section;
   }
 
-  workPanel(card, state) {
+  workPanel(card, state, today) {
     const section = h("section", { class: "work", "aria-label": "Assigned and recently relevant work" });
     const body = h("div", {});
     const filterGroup = h("div", { class: "chip-group small", role: "group", "aria-label": "Work state filter" },
-      [["all", "All"], ["open", "Open"], ["done", "Closed / merged"], ["unestimated", "No estimate"]].map(([key, label]) =>
+      [["all", "All"], ["open", "Open"], ["done", "Closed / merged"], ["stalled", "Stalled"], ["overdue", "Overdue"], ["unestimated", "No estimate"]].map(([key, label]) =>
         h("button", {
           type: "button", "aria-pressed": String(state.filter === key), dataset: { filter: key },
           onclick: () => {
@@ -392,27 +420,27 @@ export class DashboardView {
       class: "select", "aria-label": `Sort work of ${card.user.name}`, dataset: { role: "work-sort" },
       onchange: (e) => { state.sort = e.target.value; renderTable(); },
     }, Object.entries(WORK_SORTS).map(([key, [label]]) => h("option", { value: key, selected: key === state.sort }, label)));
-    const heading = h("h3", {});
+    const heading = h("h3", { tabindex: "-1" });
     section.append(h("div", { class: "panel-head" }, heading, h("div", { class: "toolbar" }, filterGroup, sortSelect)), body);
 
     const renderTable = () => {
       const items = card.work
-        .filter((w) => matchesFilter(w, state.filter))
+        .filter((w) => matchesFilter(w, state.filter, today))
         .sort(WORK_SORTS[state.sort][1]);
       heading.textContent = `Work · ${items.length} of ${card.work.length} items`;
+      for (const b of filterGroup.children) b.setAttribute("aria-pressed", String(b.dataset.filter === state.filter));
       clear(body);
       if (items.length === 0) {
         body.append(h("p", { class: "card-empty" }, card.work.length ? "No items match this filter." : "Nothing assigned or updated recently."));
         return;
       }
       const shown = state.allWork ? items : items.slice(0, WORK_ROWS);
-      const todayStr = new Date().toISOString().slice(0, 10);
       body.append(h("div", { class: "table-scroll" }, h("table", { class: "work-table" },
         h("thead", {}, h("tr", {}, ["Type", "Title", "Project", "State", "Milestone", "Time", "Due", "Updated"].map((c) => h("th", { scope: "col" }, c)))),
         h("tbody", {}, shown.map((item) => {
           const [stateText, stateCls] = STATE_BADGE[item.state] || [item.state, ""];
-          const overdue = item.due_date && item.due_date < todayStr && OPEN.has(item.state);
-          const stalled = item.stalled_days !== null && item.stalled_days !== undefined && item.relations.includes("assignee");
+          const overdue = isOverdue(item, today);
+          const stalled = isStalled(item);
           return h("tr", { class: stalled ? "is-stalled" : null, dataset: { kind: item.kind, state: item.state } },
             h("td", { class: "nowrap" },
               h("span", { class: `badge ${item.kind === "merge_request" ? "accent" : "outline"}` }, typeLabel(item)),
