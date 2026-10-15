@@ -186,11 +186,13 @@ Requested 2026-10-15. Branch: `feature/clickable-alerts`.
 
 ## Follow-ups (not scheduled)
 
+- **Decision 2026-10-15: stay on Python 3.14** (`.python-version`, Docker image, CI) for a
+  while; do not move to Python 3.15 until the user decides otherwise.
+
 - **Epic load on Premium instances** (review of v0.4.2): epics are fetched without an update
   cutoff and filtered client-side, so each run pages through every epic ever assigned to a
   person. Use a second, open-only GraphQL query (like issues and MRs) once the `state` filter
   of `group.workItems` is verified on the target GitLab version. GitLab Free is not affected.
-- Python 3.15 (released 2026-10-09) for the Docker image and CI.
 
 ---
 

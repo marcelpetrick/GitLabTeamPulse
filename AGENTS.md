@@ -7,7 +7,8 @@ Guidance for AI coding agents working in this repository.
 GitLab Team Pulse is a people-centric dashboard for one **self-managed GitLab (Free tier)**.
 It shows what a chosen set of people are working on, flags stalled, overdue and waiting work,
 tracks milestones, and reports on named teams. Every view says how fresh its data is.
-Stack: Python 3.14 (`.python-version`; package supports >=3.12), FastAPI, SQLAlchemy and
+Stack: Python 3.14 (`.python-version`; package supports >=3.12; **stay on 3.14**: the user
+decided on 2026-10-15 not to move to 3.15 for now), FastAPI, SQLAlchemy and
 Alembic on SQLite, httpx, and a vanilla ES-module frontend with no build step.
 
 ## Layout
@@ -169,6 +170,13 @@ All of these must stay green; never weaken them to get a change through.
   version is pinned in three places that must stay in sync: `Dockerfile`
   (`ghcr.io/astral-sh/uv:X`), `.github/workflows/local-pipeline.yml` (setup-uv `version`) and
   `.gitlab-ci.yml` (`uv==X`).
+
+## UI tooltips
+
+Every visible control and every number, status or badge has a tooltip (`title`) that says what
+it is, how it is counted and what clicking does; links say where they go. Charts and the
+contribution calendar use the richer custom tooltip (`bindTooltip`). The browser test
+`test_every_control_and_figure_has_a_tooltip` fails when a new element has none.
 
 ## Where to document
 
