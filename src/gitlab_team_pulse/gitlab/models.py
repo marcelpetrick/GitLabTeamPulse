@@ -45,6 +45,20 @@ class GitLabProject(_Frozen):
     web_url: str | None = None
 
 
+class MilestoneRef(_Frozen):
+    """The milestone embedded in an issue or MR payload (project or group milestone)."""
+
+    id: int
+    iid: int
+    project_id: int | None = None
+    group_id: int | None = None
+    title: str
+    state: str = "active"
+    start_date: date | None = None
+    due_date: date | None = None
+    web_url: str | None = None
+
+
 class WorkItem(_Frozen):
     kind: WorkKind
     gitlab_id: int
@@ -66,6 +80,14 @@ class WorkItem(_Frozen):
     assignees: tuple[str, ...] = ()
     draft: bool = False
     relation: Relation = "assignee"
+    merged_at: datetime | None = None
+    time_estimate: int = 0
+    time_spent: int = 0
+    reviewers: tuple[str, ...] = ()
+    merge_status: str | None = None
+    has_conflicts: bool = False
+    discussions_resolved: bool | None = None
+    milestone_ref: MilestoneRef | None = None
 
 
 class ActivityEvent(_Frozen):
@@ -79,6 +101,7 @@ class ActivityEvent(_Frozen):
     created_at: datetime
     url_path: str | None
     """Path relative to the project web URL (e.g. ``/-/issues/12``); None = project page."""
+    noteable_type: str | None = None
 
 
 class Timelog(_Frozen):
@@ -169,6 +192,30 @@ def priority_from_labels(labels: tuple[str, ...]) -> str | None:
     return None
 
 
+def parse_milestone_ref(payload: Any) -> MilestoneRef | None:
+    """The embedded milestone, or None when absent or without an ID (older payloads)."""
+    if not isinstance(payload, dict) or payload.get("id") is None:
+        return None
+    return MilestoneRef(
+        id=int(payload["id"]),
+        iid=int(payload.get("iid") or 0),
+        project_id=int(payload["project_id"]) if payload.get("project_id") is not None else None,
+        group_id=int(payload["group_id"]) if payload.get("group_id") is not None else None,
+        title=str(payload.get("title") or ""),
+        state=str(payload.get("state") or "active"),
+        start_date=_date(payload.get("start_date")),
+        due_date=_date(payload.get("due_date")),
+        web_url=payload.get("web_url") or None,
+    )
+
+
+def _seconds(value: Any) -> int:
+    try:
+        return max(int(value or 0), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def parse_work_item(payload: dict[str, Any], kind: WorkKind, relation: Relation) -> WorkItem:
     labels = tuple(
         str(label["name"] if isinstance(label, dict) else label)
@@ -177,6 +224,8 @@ def parse_work_item(payload: dict[str, Any], kind: WorkKind, relation: Relation)
     milestone = payload.get("milestone")
     references = payload.get("references") or {}
     sigil = "!" if kind == "merge_request" else "#"
+    raw_stats = payload.get("time_stats")
+    time_stats: dict[str, Any] = raw_stats if isinstance(raw_stats, dict) else {}
     updated_at = _dt(payload["updated_at"])
     if updated_at is None:
         raise ValueError("updated_at is empty")
@@ -201,6 +250,22 @@ def parse_work_item(payload: dict[str, Any], kind: WorkKind, relation: Relation)
         assignees=tuple(str(a["username"]) for a in payload.get("assignees") or ()),
         draft=bool(payload.get("draft") or payload.get("work_in_progress")),
         relation=relation,
+        merged_at=_dt(payload.get("merged_at")),
+        time_estimate=_seconds(time_stats.get("time_estimate")),
+        time_spent=_seconds(time_stats.get("total_time_spent")),
+        reviewers=tuple(
+            str(r["username"]) for r in payload.get("reviewers") or () if isinstance(r, dict)
+        ),
+        merge_status=(
+            str(payload.get("detailed_merge_status") or payload.get("merge_status") or "") or None
+        )
+        if kind == "merge_request"
+        else None,
+        has_conflicts=bool(payload.get("has_conflicts")),
+        discussions_resolved=payload.get("blocking_discussions_resolved")
+        if isinstance(payload.get("blocking_discussions_resolved"), bool)
+        else None,
+        milestone_ref=parse_milestone_ref(milestone),
     )
 
 
@@ -261,6 +326,7 @@ def parse_event(payload: dict[str, Any]) -> ActivityEvent:
     if created_at is None:
         raise ValueError("created_at is empty")
     category = categorize_event(action, target_type, push is not None, note is not None)
+    noteable = str(note.get("noteable_type") or "") or None if note is not None else None
     url_path: str | None = None
     if push is not None:
         summary, url_path = _push_summary(push)
@@ -300,6 +366,7 @@ def parse_event(payload: dict[str, Any]) -> ActivityEvent:
         summary=summary,
         created_at=created_at,
         url_path=url_path,
+        noteable_type=noteable,
     )
 
 
@@ -388,3 +455,38 @@ def counts_as_contribution(event: ActivityEvent) -> bool:
     if event.category in {"push", "comment"}:
         return True
     return event.target_type in CONTRIBUTION_TARGETS and event.action_name in CONTRIBUTION_ACTIONS
+
+
+MR_TARGETS = {"MergeRequest"}
+ISSUE_TARGETS = {"Issue", "WorkItem"}
+
+
+def history_metric(event: ActivityEvent) -> str | None:
+    """Which daily history counter an event feeds, or None.
+
+    Only review and delivery signals are kept; pushes and commit counts are deliberately not
+    stored (they are easy to inflate and say little about delivered work).
+    """
+    if event.category == "comment":
+        if event.noteable_type == "MergeRequest":
+            return "mr_commented"
+        if event.noteable_type in ISSUE_TARGETS:
+            return "issue_commented"
+        return None
+    action = event.action_name
+    if event.target_type in MR_TARGETS:
+        if action in {"opened", "created"}:
+            return "mr_opened"
+        if action in {"accepted", "merged"}:
+            return "mr_merged"
+        if action == "approved":
+            return "mr_approved"
+        return None
+    if action == "approved":
+        return "mr_approved"
+    if event.target_type in ISSUE_TARGETS:
+        if action in {"opened", "created"}:
+            return "issue_opened"
+        if action == "closed":
+            return "issue_closed"
+    return None

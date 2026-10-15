@@ -16,17 +16,25 @@ from gitlab_team_pulse.gitlab.models import (
     ActivityEvent,
     GitLabProject,
     GitLabUser,
+    MilestoneRef,
     Timelog,
     WorkItem,
 )
 from gitlab_team_pulse.models import (
+    ActivityDaily,
     ActivityEventRecord,
     AppState,
     ContributionDay,
     ErrorRecord,
+    Milestone,
+    Outcome,
     Project,
     SyncRun,
     SyncState,
+    Team,
+    TeamMember,
+    TeamScope,
+    TimelogDaily,
     TimelogRecord,
     User,
     WorkItemAssignee,
@@ -35,6 +43,7 @@ from gitlab_team_pulse.models import (
 
 DATA_VERSION = "data_version"
 USERS_VERSION = "users_version"
+TEAMS_VERSION = "teams_version"
 MAX_MESSAGE = 2000
 
 
@@ -71,6 +80,17 @@ def bump_users_version(session: Session) -> int:
     whole directory every time a selected user's activity changes."""
     version = users_version(session) + 1
     set_value(session, USERS_VERSION, str(version))
+    return version
+
+
+def teams_version(session: Session) -> int:
+    return int(get_value(session, TEAMS_VERSION) or 0)
+
+
+def bump_teams_version(session: Session) -> int:
+    """Changes when a team is created, edited or deleted."""
+    version = teams_version(session) + 1
+    set_value(session, TEAMS_VERSION, str(version))
     return version
 
 
@@ -340,6 +360,15 @@ def replace_user_work(
         record.assignees = list(item.assignees)
         record.draft = item.draft
         record.refreshed_at = now
+        record.merged_at = item.merged_at
+        record.time_estimate = item.time_estimate
+        record.time_spent = item.time_spent
+        record.reviewers = list(item.reviewers)
+        record.merge_status = item.merge_status
+        record.has_conflicts = item.has_conflicts
+        record.discussions_resolved = item.discussions_resolved
+        record.milestone_id = item.milestone_ref.id if item.milestone_ref else None
+    upsert_milestones(session, [i.milestone_ref for i in items if i.milestone_ref], now)
     session.flush()
     stale_links = delete(WorkItemAssignee).where(WorkItemAssignee.user_id == user_id)
     if keep_kinds:
@@ -474,3 +503,207 @@ def replace_contribution_days(
         for day, count in sorted(counts.items())
         if day >= from_day and count > 0
     )
+
+
+# ---------------------------------------------------------------------- milestones
+
+
+def upsert_milestones(session: Session, refs: list[MilestoneRef], now: datetime) -> None:
+    """Remember milestone metadata seen on work items; statistics are filled separately."""
+    unique = {ref.id: ref for ref in refs}
+    if not unique:
+        return
+    existing = {m.id: m for m in session.scalars(select(Milestone).where(Milestone.id.in_(unique)))}
+    for ref in unique.values():
+        record = existing.get(ref.id)
+        if record is None:
+            record = Milestone(id=ref.id)
+            session.add(record)
+        record.iid = ref.iid
+        record.project_id = ref.project_id
+        record.group_id = ref.group_id
+        record.title = ref.title
+        record.state = ref.state
+        record.start_date = ref.start_date
+        record.due_date = ref.due_date
+        record.web_url = ref.web_url
+        record.seen_at = now
+
+
+def milestone_stats(issues: list[WorkItem], today: date) -> dict[str, object]:
+    """Progress of a milestone computed from its issues (GitLab Free has no burndown API)."""
+    open_items = [i for i in issues if i.state not in ("closed", "merged")]
+    closed = [i for i in issues if i.state == "closed"]
+    per_assignee: dict[str, int] = {}
+    for item in open_items:
+        for name in item.assignees or ("",):
+            per_assignee[name] = per_assignee.get(name, 0) + 1
+    return {
+        "total": len(issues),
+        "closed": len(closed),
+        "estimate": sum(i.time_estimate for i in issues),
+        "spent": sum(i.time_spent for i in issues),
+        "remaining": sum(max(i.time_estimate - i.time_spent, 0) for i in open_items),
+        "open_unestimated": sum(1 for i in open_items if i.time_estimate == 0),
+        "open_overdue": sum(1 for i in open_items if i.due_date is not None and i.due_date < today),
+        "open_by_assignee": per_assignee,
+        "closed_dates": sorted(i.closed_at.date().isoformat() for i in closed if i.closed_at),
+    }
+
+
+def set_milestone_stats(
+    session: Session, milestone_id: int, stats: dict[str, object], now: datetime
+) -> None:
+    record = session.get(Milestone, milestone_id)
+    if record is not None:
+        record.stats = stats
+        record.stats_at = now
+
+
+# ---------------------------------------------------------------------- history
+
+
+def replace_activity_daily(
+    session: Session, user_id: int, counts: dict[tuple[date, int, str], int], from_day: date
+) -> None:
+    """Replace one user's daily history counters from ``from_day`` onwards."""
+    session.execute(
+        delete(ActivityDaily).where(ActivityDaily.user_id == user_id, ActivityDaily.day >= from_day)
+    )
+    session.add_all(
+        ActivityDaily(user_id=user_id, day=day, project_id=project_id, metric=metric, value=value)
+        for (day, project_id, metric), value in sorted(counts.items())
+        if day >= from_day and value > 0
+    )
+
+
+def replace_timelog_daily(
+    session: Session,
+    user_id: int,
+    seconds: dict[tuple[date, int], tuple[str | None, int]],
+    from_day: date,
+) -> None:
+    """Replace one user's logged seconds per day and project from ``from_day`` onwards."""
+    session.execute(
+        delete(TimelogDaily).where(TimelogDaily.user_id == user_id, TimelogDaily.day >= from_day)
+    )
+    session.add_all(
+        TimelogDaily(user_id=user_id, day=day, project_id=pid, project_path=path, seconds=value)
+        for (day, pid), (path, value) in sorted(seconds.items())
+        if day >= from_day and value > 0
+    )
+
+
+def apply_outcomes(session: Session, user_id: int, items: list[WorkItem]) -> None:
+    """Upsert merged MRs and closed issues; drop items that are no longer finished."""
+    finished: dict[tuple[str, int], tuple[WorkItem, datetime]] = {}
+    unfinished: set[tuple[str, int]] = set()
+    for item in items:
+        key: tuple[str, int] = (item.kind, item.gitlab_id)
+        done = "merged" if item.kind == "merge_request" else "closed"
+        when = item.merged_at if item.kind == "merge_request" else item.closed_at
+        if item.state == done and when is not None:
+            finished[key] = (item, when)
+        else:
+            unfinished.add(key)
+    keys = set(finished) | unfinished
+    if not keys:
+        return
+    existing = {
+        (o.kind, o.gitlab_id): o
+        for o in session.scalars(
+            select(Outcome).where(
+                Outcome.user_id == user_id, Outcome.gitlab_id.in_({gid for _, gid in keys})
+            )
+        )
+    }
+    for gone in unfinished:
+        if gone in existing:
+            session.delete(existing[gone])
+    for done_key, (item, when) in finished.items():
+        record = existing.get(done_key)
+        if record is None:
+            record = Outcome(user_id=user_id, kind=item.kind, gitlab_id=item.gitlab_id)
+            session.add(record)
+        record.project_id = item.project_id
+        record.iid = item.iid
+        record.reference = item.reference
+        record.title = item.title
+        record.web_url = item.web_url
+        record.created_at = item.created_at
+        record.finished_at = when
+        record.time_estimate = item.time_estimate
+        record.time_spent = item.time_spent
+
+
+# ---------------------------------------------------------------------- teams
+
+
+def list_teams(session: Session) -> list[Team]:
+    return list(session.scalars(select(Team).order_by(func.lower(Team.name))))
+
+
+def team_members(session: Session, team_ids: list[int] | None = None) -> dict[int, list[int]]:
+    statement = select(TeamMember.team_id, TeamMember.user_id)
+    if team_ids is not None:
+        statement = statement.where(TeamMember.team_id.in_(team_ids))
+    result: dict[int, list[int]] = {}
+    for team_id, user_id in session.execute(statement):
+        result.setdefault(team_id, []).append(user_id)
+    return result
+
+
+def team_scopes(session: Session, team_ids: list[int] | None = None) -> dict[int, list[str]]:
+    statement = select(TeamScope.team_id, TeamScope.path).order_by(TeamScope.path)
+    if team_ids is not None:
+        statement = statement.where(TeamScope.team_id.in_(team_ids))
+    result: dict[int, list[str]] = {}
+    for team_id, path in session.execute(statement):
+        result.setdefault(team_id, []).append(path)
+    return result
+
+
+def tracked_team_user_ids(session: Session) -> set[int]:
+    """Everyone in any team (history is kept for them even when not on the dashboard)."""
+    return set(session.scalars(select(TeamMember.user_id).distinct()))
+
+
+def save_team(
+    session: Session,
+    team: Team | None,
+    *,
+    name: str,
+    description: str,
+    member_ids: list[int],
+    scopes: list[str],
+    now: datetime,
+) -> Team:
+    """Create or replace a team's name, description, members and scope."""
+    if team is None:
+        team = Team(name=name, description=description, created_at=now, updated_at=now)
+        session.add(team)
+        session.flush()
+    team.name = name
+    team.description = description
+    team.updated_at = now
+    session.execute(delete(TeamMember).where(TeamMember.team_id == team.id))
+    session.execute(delete(TeamScope).where(TeamScope.team_id == team.id))
+    session.add_all(TeamMember(team_id=team.id, user_id=uid) for uid in sorted(set(member_ids)))
+    session.add_all(TeamScope(team_id=team.id, path=path) for path in sorted(set(scopes)))
+    return team
+
+
+def apply_selection(session: Session, user_ids: set[int], now: datetime) -> tuple[set[int], int]:
+    """Make exactly ``user_ids`` the selection; returns (newly selected IDs, deselected count)."""
+    added: set[int] = set()
+    removed = 0
+    for user in session.scalars(
+        select(User).where(User.selected.is_(True) | User.id.in_(user_ids))
+    ):
+        wanted = user.id in user_ids
+        if wanted and not user.selected:
+            added.add(user.id)
+        elif not wanted and user.selected:
+            removed += 1
+        set_selected(session, user.id, wanted, now)
+    return added, removed

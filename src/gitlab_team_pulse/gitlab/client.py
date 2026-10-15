@@ -106,6 +106,13 @@ def is_capability_message(message: str) -> bool:
     return bool(CAPABILITY_PATTERN.search(message))
 
 
+WORK_LISTS: tuple[tuple[str, WorkKind, Relation], ...] = (
+    ("issues", "issue", "assignee"),
+    ("merge_requests", "merge_request", "assignee"),
+    ("merge_requests", "merge_request", "reviewer"),
+)
+
+
 class GitLabClient:
     """One instance per process; share it between sync runs."""
 
@@ -331,24 +338,63 @@ class GitLabClient:
         return [guarded(kind, lambda p: parse_work_item(p, kind, relation), item) for item in pages]
 
     async def get_user_work(self, user_id: int, updated_after: datetime) -> list[WorkItem]:
-        """Assigned issues and MRs plus MRs to review, in every state, updated since the cutoff."""
-        common = {
+        """Assigned issues and MRs plus MRs to review: every state updated since the cutoff,
+        and every open item regardless of age (stalled work must not drop out of view)."""
+        recent = {
             "scope": "all",
             "state": "all",
             "updated_after": updated_after.isoformat(),
             "order_by": "updated_at",
             "sort": "desc",
         }
-        issues, assigned_mrs, review_mrs = await asyncio.gather(
-            self._work("issues", "issue", "assignee", {**common, "assignee_id": user_id}),
+        still_open = {"scope": "all", "state": "opened", "order_by": "updated_at", "sort": "desc"}
+        lists = await asyncio.gather(
+            *(
+                self._work(path, kind, relation, {**common, f"{relation}_id": user_id})
+                for common in (recent, still_open)
+                for path, kind, relation in WORK_LISTS
+            )
+        )
+        unique: dict[tuple[str, int, str], WorkItem] = {}
+        for item in (item for found in lists for item in found):
+            unique.setdefault((item.kind, item.gitlab_id, item.relation), item)
+        return list(unique.values())
+
+    async def get_user_outcomes(self, user_id: int, updated_after: datetime) -> list[WorkItem]:
+        """Merged MRs authored by the user and issues assigned to them, updated since the cutoff.
+
+        Issues come in every state so that a reopened issue can be removed from the outcomes.
+        """
+        common = {
+            "scope": "all",
+            "updated_after": updated_after.isoformat(),
+            "order_by": "updated_at",
+            "sort": "desc",
+        }
+        merged, issues = await asyncio.gather(
             self._work(
-                "merge_requests", "merge_request", "assignee", {**common, "assignee_id": user_id}
+                "merge_requests",
+                "merge_request",
+                "assignee",
+                {**common, "state": "merged", "author_id": user_id},
             ),
             self._work(
-                "merge_requests", "merge_request", "reviewer", {**common, "reviewer_id": user_id}
+                "issues", "issue", "assignee", {**common, "state": "all", "assignee_id": user_id}
             ),
         )
-        return [*issues, *assigned_mrs, *review_mrs]
+        return [*merged, *issues]
+
+    async def get_milestone_issues(
+        self, milestone_id: int, *, project_id: int | None, group_id: int | None
+    ) -> list[WorkItem]:
+        """Every issue of a project or group milestone (Free: the basis of our own burndown)."""
+        if project_id is not None:
+            path = f"projects/{project_id}/milestones/{milestone_id}/issues"
+        elif group_id is not None:
+            path = f"groups/{group_id}/milestones/{milestone_id}/issues"
+        else:
+            raise GitLabResponseError(f"milestone {milestone_id}: neither project nor group")
+        return await self._work(path, "issue", "assignee", {})
 
     async def get_user_recent_activity(
         self,

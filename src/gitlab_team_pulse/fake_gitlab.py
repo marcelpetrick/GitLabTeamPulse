@@ -67,6 +67,7 @@ class FakeData:
     events: list[dict[str, Any]] = field(default_factory=list)
     timelogs: list[dict[str, Any]] = field(default_factory=list)
     epics: list[dict[str, Any]] = field(default_factory=list)
+    milestones: dict[int, dict[str, Any]] = field(default_factory=dict)
     next_event_id: int = 1
 
 
@@ -247,7 +248,184 @@ def build_data(now: datetime | None = None, seed: int = 7) -> FakeData:
                 "dueDate": (now + timedelta(days=40)).date().isoformat(),
             }
         )
+    enrich(data, active[:10], random.Random(seed + 101))  # noqa: S311
     return data
+
+
+MILESTONE_PLAN = {"2026.10": (-20, 6), "2026.11": (7, 37), "Backlog": None}
+MERGE_STATES = [
+    "mergeable",
+    "mergeable",
+    "mergeable",
+    "not_approved",
+    "conflict",
+    "ci_must_pass",
+    "discussions_not_resolved",
+]
+
+
+def _time_stats(rng: random.Random) -> dict[str, int]:
+    estimate = rng.choice([0, 0, 7200, 14400, 28800, 57600])
+    if estimate:
+        spent = int(estimate * rng.choice([0, 0.5, 1, 1.3, 2]))
+    else:
+        spent = rng.choice([0, 1800, 7200])
+    return {"time_estimate": estimate, "total_time_spent": spent}
+
+
+def enrich(data: FakeData, people: list[dict[str, Any]], rng: random.Random) -> None:
+    """Fields and history beyond the original demo, drawn from a separate random stream so the
+    original data (and everything derived from it) stays exactly as before.
+
+    Adds milestones with dates, time estimates, reviewers and merge states, a few stalled and
+    unreviewed items, and half a year of finished work and time entries for the team report.
+    """
+    now = data.now
+    for pid in data.projects:
+        for number, (title, plan) in enumerate(MILESTONE_PLAN.items(), start=1):
+            milestone_id = 700 + pid * 10 + number
+            data.milestones[milestone_id] = {
+                "id": milestone_id,
+                "iid": number,
+                "project_id": pid,
+                "title": title,
+                "state": "active",
+                "start_date": (now + timedelta(days=plan[0])).date().isoformat() if plan else None,
+                "due_date": (now + timedelta(days=plan[1])).date().isoformat() if plan else None,
+            }
+    by_title = {(m["project_id"], m["title"]): m for m in data.milestones.values()}
+    for issue in data.issues:
+        milestone_title = (issue.get("milestone") or {}).get("title")
+        issue["milestone"] = by_title.get((issue["project_id"], milestone_title))
+        issue["time_stats"] = _time_stats(rng)
+    for mr in data.merge_requests:
+        status = rng.choice(MERGE_STATES) if mr["state"] == "opened" else "not_open"
+        mr["detailed_merge_status"] = status
+        mr["has_conflicts"] = status == "conflict"
+        mr["blocking_discussions_resolved"] = status != "discussions_not_resolved"
+        mr["time_stats"] = {"time_estimate": 0, "total_time_spent": 0}
+    item_id = 5000
+    for index, user in enumerate(people):
+        others = [u for u in people if u is not user]
+        if index < 4:
+            # Open work nobody touched for a while: what "Needs attention" is for.
+            for days in rng.sample([9, 12, 23, 41, 66], 2):
+                item_id += 1
+                project = rng.choice(list(data.projects))
+                updated = now - timedelta(days=days, hours=rng.randint(0, 10))
+                data.issues.append(
+                    {
+                        "id": item_id,
+                        "iid": 300 + item_id % 200,
+                        "project_id": project,
+                        "title": rng.choice(ISSUE_TITLES),
+                        "state": "opened",
+                        "labels": rng.sample(LABELS, rng.randint(0, 2)),
+                        "milestone": by_title[(project, "2026.10")],
+                        "due_date": (now - timedelta(days=rng.randint(1, 4))).date().isoformat()
+                        if index % 2 == 0
+                        else None,
+                        "created_at": _iso(updated - timedelta(days=rng.randint(5, 30))),
+                        "updated_at": _iso(updated),
+                        "closed_at": None,
+                        "author": {"username": rng.choice(people)["username"]},
+                        "assignees": [{"id": user["id"], "username": user["username"]}],
+                        "issue_type": "issue",
+                        "time_stats": _time_stats(rng),
+                    }
+                )
+            item_id += 1
+            updated = now - timedelta(days=rng.randint(2, 11))
+            data.merge_requests.append(
+                {
+                    "id": item_id,
+                    "iid": 400 + item_id % 100,
+                    "project_id": rng.choice(list(data.projects)),
+                    "title": rng.choice(MR_TITLES).removeprefix("Draft: "),
+                    "state": "opened",
+                    "draft": False,
+                    "labels": [],
+                    "milestone": None,
+                    "created_at": _iso(updated - timedelta(days=rng.randint(1, 6))),
+                    "updated_at": _iso(updated),
+                    "merged_at": None,
+                    "closed_at": None,
+                    "author": {"username": user["username"]},
+                    "assignees": [{"id": user["id"], "username": user["username"]}],
+                    "reviewers": [],
+                    "detailed_merge_status": "not_approved",
+                    "has_conflicts": False,
+                    "blocking_discussions_resolved": True,
+                    "time_stats": {"time_estimate": 0, "total_time_spent": 0},
+                }
+            )
+        history: list[dict[str, Any]] = []
+        for _ in range(rng.randint(8, 16)):
+            item_id += 1
+            merged = now - timedelta(days=rng.randint(31, 200), hours=rng.randint(0, 9))
+            reviewer = rng.choice(others)
+            data.merge_requests.append(
+                {
+                    "id": item_id,
+                    "iid": 500 + item_id % 400,
+                    "project_id": rng.choice(list(data.projects)[:4]),
+                    "title": rng.choice(MR_TITLES).removeprefix("Draft: "),
+                    "state": "merged",
+                    "draft": False,
+                    "labels": rng.sample(LABELS, rng.randint(0, 2)),
+                    "milestone": None,
+                    "created_at": _iso(merged - timedelta(hours=rng.randint(4, 150))),
+                    "updated_at": _iso(merged),
+                    "merged_at": _iso(merged),
+                    "closed_at": None,
+                    "author": {"username": user["username"]},
+                    "assignees": [{"id": user["id"], "username": user["username"]}],
+                    "reviewers": [{"id": reviewer["id"], "username": reviewer["username"]}],
+                    "detailed_merge_status": "not_open",
+                    "has_conflicts": False,
+                    "blocking_discussions_resolved": True,
+                    "time_stats": {"time_estimate": 0, "total_time_spent": 0},
+                }
+            )
+        for _ in range(rng.randint(10, 20)):
+            item_id += 1
+            closed = now - timedelta(days=rng.randint(31, 200), hours=rng.randint(0, 9))
+            issue = {
+                "id": item_id,
+                "iid": 900 + item_id % 900,
+                "project_id": rng.choice(list(data.projects)[:4]),
+                "title": rng.choice(ISSUE_TITLES),
+                "state": "closed",
+                "labels": rng.sample(LABELS, rng.randint(0, 2)),
+                "milestone": None,
+                "due_date": None,
+                "created_at": _iso(closed - timedelta(days=rng.randint(1, 30))),
+                "updated_at": _iso(closed),
+                "closed_at": _iso(closed),
+                "author": {"username": rng.choice(people)["username"]},
+                "assignees": [{"id": user["id"], "username": user["username"]}],
+                "issue_type": "issue",
+                "time_stats": _time_stats(rng),
+            }
+            data.issues.append(issue)
+            history.append(issue)
+        timelog_id = 100000 + index * 10000
+        for days_ago in range(7, 200):
+            when = now - timedelta(days=days_ago)
+            if when.weekday() >= 5 or rng.random() < 0.35:
+                continue
+            for _ in range(rng.randint(1, 3)):
+                timelog_id += 1
+                data.timelogs.append(
+                    {
+                        "id": timelog_id,
+                        "user_id": user["id"],
+                        "spent_at": when - timedelta(hours=rng.randint(0, 6)),
+                        "seconds": rng.choice([1800, 3600, 5400, 7200, 10800]),
+                        "summary": rng.choice([None, "Implementation", "Review", "Support"]),
+                        "issue": rng.choice(history),
+                    }
+                )
 
 
 def add_event(
@@ -397,6 +575,22 @@ def web_page(data: FakeData, path: str) -> HTMLResponse:
             esc(full_path),
             f"Project <strong>{esc(project['name'])}</strong> (<code>{esc(full_path)}</code>).",
         )
+    if len(parts) == 5 and parts[2:4] == ["-", "milestones"]:
+        found = next(
+            (
+                m
+                for m in data.milestones.values()
+                if m["project_id"] == project["id"] and str(m["iid"]) == parts[4]
+            ),
+            None,
+        )
+        if found is None:
+            return missing()
+        return _web_html(
+            f"Milestone {esc(found['title'])}",
+            f"Milestone <strong>{esc(found['title'])}</strong> in project "
+            f"<code>{esc(full_path)}</code>.",
+        )
     kinds = {
         "issues": ("Issue", "#", data.issues),
         "merge_requests": ("Merge request", "!", data.merge_requests),
@@ -448,8 +642,13 @@ def create_fake_gitlab(
         project = app.state.data.projects[item["project_id"]]
         segment = "issues" if kind == "issue" else "merge_requests"
         sigil = "#" if kind == "issue" else "!"
+        milestone = item.get("milestone")
+        if isinstance(milestone, dict) and "id" in milestone:
+            url = f"{project_url(request, milestone['project_id'])}/-/milestones/{milestone['iid']}"
+            milestone = {**milestone, "web_url": url}
         return {
             **item,
+            "milestone": milestone,
             "web_url": f"{project_url(request, item['project_id'])}/-/{segment}/{item['iid']}",
             "references": {"full": f"{project['path_with_namespace']}{sigil}{item['iid']}"},
         }
@@ -503,8 +702,15 @@ def create_fake_gitlab(
         updated_after = _parse_time(params.get("updated_after"))
         assignee = params.get("assignee_id")
         reviewer = params.get("reviewer_id")
+        author = params.get("author_id")
+        state = params.get("state", "all")
+        authors = {u["username"]: str(u["id"]) for u in app.state.data.users}
         selected = []
         for item in items:
+            if state != "all" and item["state"] != state:
+                continue
+            if author and authors.get(item["author"]["username"]) != author:
+                continue
             if assignee and all(str(a["id"]) != assignee for a in item.get("assignees", [])):
                 continue
             if reviewer and all(str(r["id"]) != reviewer for r in item.get("reviewers", [])):
@@ -522,6 +728,18 @@ def create_fake_gitlab(
     @app.get("/api/v4/merge_requests")
     async def merge_requests(request: Request) -> JSONResponse:
         return filter_work(request, app.state.data.merge_requests, "merge_request")
+
+    @app.get("/api/v4/projects/{project_id}/milestones/{milestone_id}/issues")
+    async def milestone_issues(request: Request, project_id: int, milestone_id: int) -> Response:
+        milestone = app.state.data.milestones.get(milestone_id)
+        if milestone is None or milestone["project_id"] != project_id:
+            return JSONResponse({"message": "404 Milestone Not Found"}, status_code=404)
+        chosen = [
+            decorate_work(request, issue, "issue")
+            for issue in app.state.data.issues
+            if (issue.get("milestone") or {}).get("id") == milestone_id
+        ]
+        return _paginate(request, chosen)
 
     @app.get("/api/v4/users/{user_id}/events")
     async def events(request: Request, user_id: int) -> JSONResponse:

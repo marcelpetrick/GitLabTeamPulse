@@ -49,7 +49,13 @@ async def test_selected_sync_fetches_all_categories(
     assert await service.sync_selected("manual") == "ok"
     data = fake_app.state.data
     with session_factory() as session:
-        expected_work = [i for i in data.issues if i["assignees"][0]["id"] == ALEX]
+        cutoff = (service.clock() - timedelta(days=service.settings.work_window_days)).isoformat()
+        expected_work = [
+            i
+            for i in data.issues
+            if i["assignees"][0]["id"] == ALEX
+            and (i["state"] == "opened" or i["updated_at"] >= cutoff)
+        ]
         assert count(session, WorkItemAssignee, user_id=ALEX, relation="assignee") >= len(
             expected_work
         )
@@ -83,7 +89,7 @@ async def test_only_selected_users_are_crawled(
     assert user_paths
     assert all(p == f"/api/v4/users/{ALEX}/events" for p in user_paths)
     assert all(
-        f"assignee_id={ALEX}" in q or f"reviewer_id={ALEX}" in q
+        f"assignee_id={ALEX}" in q or f"reviewer_id={ALEX}" in q or f"author_id={ALEX}" in q
         for p, q in zip(paths, queries, strict=True)
         if p in {"/api/v4/issues", "/api/v4/merge_requests"}
     )
@@ -275,7 +281,8 @@ async def test_projects_are_not_refetched_while_fresh(
     before = fake_app.state.requests
     clock.advance(minutes=10)
     await service.sync_selected("scheduled")
-    assert 5 <= fake_app.state.requests - before <= 5 + 4  # no project metadata requests
+    # 6 work lists, events and timelogs; history is hourly and project metadata stays cached
+    assert 8 <= fake_app.state.requests - before <= 8 + 4
 
 
 async def test_work_snapshot_drops_unassigned_items(
@@ -340,7 +347,7 @@ async def test_missing_epic_capability_is_a_diagnostic_not_a_failure(
     before = fake_app.state.requests
     clock.advance(minutes=10)
     await service.sync_selected("scheduled")
-    assert fake_app.state.requests - before == 5  # no epic query until the recheck interval
+    assert fake_app.state.requests - before == 8  # no epic query until the recheck interval
     fake_app.state.epics_supported = True
     clock.advance(hours=1)
     await service.sync_selected("scheduled")

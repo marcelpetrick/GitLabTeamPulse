@@ -64,6 +64,13 @@ class Settings(BaseSettings):
     contributions_refresh_minutes: int = Field(default=60, ge=10)
     timezone: str = "UTC"
 
+    stalled_days: int = Field(default=7, ge=1, le=365)
+    due_soon_days: int = Field(default=7, ge=0, le=90)
+    milestones_max: int = Field(default=12, ge=0, le=50)
+    max_tracked_users: int = Field(default=30, ge=1, le=200)
+    teams_readonly: bool = False
+    team_person_breakdown: bool = False
+
     @field_validator("gitlab_url")
     @classmethod
     def _normalize_url(cls, value: str) -> str:

@@ -260,12 +260,61 @@ async def test_get_user_work_queries_all_states(client: GitLabClient) -> None:
         ("merge_request", "assignee"),
         ("merge_request", "reviewer"),
     ]
-    params = issues.calls.last.request.url.params
-    assert params["state"] == "all"
-    assert params["scope"] == "all"
-    assert params["updated_after"] == "2026-09-01T00:00:00+00:00"
-    assert assigned.called
-    assert review.called
+    calls = [call.request.url.params for call in issues.calls]
+    recent = next(params for params in calls if params["state"] == "all")
+    assert recent["scope"] == "all"
+    assert recent["updated_after"] == "2026-09-01T00:00:00+00:00"
+    still_open = next(params for params in calls if params["state"] == "opened")
+    assert "updated_after" not in still_open
+    assert assigned.call_count == 2
+    assert review.call_count == 2
+
+
+@respx.mock
+async def test_get_user_outcomes_lists_merged_mrs_by_author_and_assigned_issues(
+    client: GitLabClient,
+) -> None:
+    item = {
+        "id": 1,
+        "iid": 1,
+        "title": "t",
+        "state": "merged",
+        "updated_at": "2026-09-20T10:00:00Z",
+    }
+    merged = respx.get(f"{API}/merge_requests").mock(return_value=httpx.Response(200, json=[item]))
+    issues = respx.get(f"{API}/issues").mock(
+        return_value=httpx.Response(200, json=[{**item, "id": 2, "state": "closed"}])
+    )
+    found = await client.get_user_outcomes(5, datetime(2026, 9, 1, tzinfo=UTC))
+    assert [(w.kind, w.state) for w in found] == [("merge_request", "merged"), ("issue", "closed")]
+    mr_params = merged.calls.last.request.url.params
+    assert (mr_params["author_id"], mr_params["state"]) == ("5", "merged")
+    issue_params = issues.calls.last.request.url.params
+    assert (issue_params["assignee_id"], issue_params["state"]) == ("5", "all")
+
+
+@respx.mock
+async def test_get_milestone_issues_for_project_and_group_milestones(
+    client: GitLabClient,
+) -> None:
+    item = {
+        "id": 1,
+        "iid": 1,
+        "title": "t",
+        "state": "opened",
+        "updated_at": "2026-09-20T10:00:00Z",
+    }
+    project = respx.get(f"{API}/projects/3/milestones/7/issues").mock(
+        return_value=httpx.Response(200, json=[item])
+    )
+    group = respx.get(f"{API}/groups/4/milestones/8/issues").mock(
+        return_value=httpx.Response(200, json=[item, {**item, "id": 2}])
+    )
+    assert len(await client.get_milestone_issues(7, project_id=3, group_id=None)) == 1
+    assert len(await client.get_milestone_issues(8, project_id=None, group_id=4)) == 2
+    assert project.called and group.called
+    with pytest.raises(GitLabResponseError):
+        await client.get_milestone_issues(9, project_id=None, group_id=None)
 
 
 @respx.mock

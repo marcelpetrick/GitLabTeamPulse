@@ -184,6 +184,14 @@ class WorkItemRecord(Base):
     assignees: Mapped[list[str]] = mapped_column(JSON, default=list)
     draft: Mapped[bool] = mapped_column(Boolean, default=False)
     refreshed_at: Mapped[datetime]
+    merged_at: Mapped[datetime | None]
+    time_estimate: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    time_spent: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    reviewers: Mapped[list[str]] = mapped_column(JSON, default=list, server_default="[]")
+    merge_status: Mapped[str | None] = mapped_column(String(64))
+    has_conflicts: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    discussions_resolved: Mapped[bool | None] = mapped_column(Boolean)
+    milestone_id: Mapped[int | None] = mapped_column(Integer, index=True)
 
     __table_args__ = (UniqueConstraint("kind", "gitlab_id", name="uq_work_items_kind_gitlab_id"),)
 
@@ -254,3 +262,115 @@ class ContributionDay(Base):
     )
     day: Mapped[date] = mapped_column(primary_key=True)
     count: Mapped[int] = mapped_column(Integer)
+
+
+class Milestone(Base):
+    """A project or group milestone referenced by monitored work, with self-computed progress.
+
+    GitLab Free has no burndown API, so the statistics are computed from the milestone's issues.
+    """
+
+    __tablename__ = "milestones"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    iid: Mapped[int] = mapped_column(Integer)
+    project_id: Mapped[int | None] = mapped_column(Integer)
+    group_id: Mapped[int | None] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(255))
+    state: Mapped[str] = mapped_column(String(32))
+    start_date: Mapped[date | None]
+    due_date: Mapped[date | None]
+    web_url: Mapped[str | None] = mapped_column(Text)
+    stats: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    seen_at: Mapped[datetime] = mapped_column(index=True)
+    stats_at: Mapped[datetime | None]
+
+
+class Team(Base):
+    """A named, shared group of people with an optional project/namespace scope."""
+
+    __tablename__ = "teams"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+
+
+class TeamMember(Base):
+    __tablename__ = "team_members"
+
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+
+
+class TeamScope(Base):
+    """A project path or namespace prefix; the team report only counts work inside it."""
+
+    __tablename__ = "team_scopes"
+
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    path: Mapped[str] = mapped_column(String(512), primary_key=True)
+
+
+class ActivityDaily(Base):
+    """Per-user, per-day, per-project counts of review and delivery events (history).
+
+    ``project_id`` 0 means "no project". Raw events are not kept beyond the short cache.
+    """
+
+    __tablename__ = "activity_daily"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    metric: Mapped[str] = mapped_column(String(32), primary_key=True)
+    value: Mapped[int] = mapped_column(Integer)
+
+
+class TimelogDaily(Base):
+    """Logged seconds per user, local day and project (history); ``project_id`` 0 = unknown."""
+
+    __tablename__ = "timelog_daily"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    day: Mapped[date] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    project_path: Mapped[str | None] = mapped_column(String(512))
+    seconds: Mapped[int] = mapped_column(Integer)
+
+
+class Outcome(Base):
+    """A merged MR (attributed to its author) or a closed issue (to its current assignees)."""
+
+    __tablename__ = "outcomes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(16))
+    gitlab_id: Mapped[int] = mapped_column(Integer)
+    project_id: Mapped[int | None] = mapped_column(Integer)
+    iid: Mapped[int] = mapped_column(Integer)
+    reference: Mapped[str] = mapped_column(String(512))
+    title: Mapped[str] = mapped_column(Text)
+    web_url: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime | None]
+    finished_at: Mapped[datetime]
+    time_estimate: Mapped[int] = mapped_column(Integer, default=0)
+    time_spent: Mapped[int] = mapped_column(Integer, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "kind", "gitlab_id", name="uq_outcomes_user_kind_gitlab_id"),
+        Index("ix_outcomes_user_finished", "user_id", "finished_at"),
+    )

@@ -100,7 +100,7 @@ async def test_backfill_matches_gitlab_counting(
     with session_factory() as session:
         state = store.get_state(session, "contributions", ALEX)
         assert state.status == "ok"
-        assert state.cursor == f"{clock.now.date().isoformat()}@UTC"
+        assert state.cursor == f"{clock.now.date().isoformat()}@UTC@h1"
 
 
 async def test_changed_timezone_forces_a_full_backfill(
@@ -117,17 +117,30 @@ async def test_changed_timezone_forces_a_full_backfill(
     queries = [q for p, q in fake_app.state.request_log if p.endswith("/events")]
     assert any(f"after={backfill_after}" in q for q in queries)
     with session_factory() as session:
-        assert store.get_state(session, "contributions", ALEX).cursor.endswith("@Europe/Berlin")
+        assert store.get_state(session, "contributions", ALEX).cursor.endswith("@Europe/Berlin@h1")
 
 
-async def test_legacy_cursor_without_a_zone_stays_incremental(
-    service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI, clock: Clock
+@pytest.mark.parametrize("legacy", ["{day}", "{day}@UTC"])
+async def test_cursor_from_before_the_history_revision_backfills_once(
+    service: SyncService,
+    session_factory: sessionmaker[Session],
+    fake_app: FastAPI,
+    clock: Clock,
+    legacy: str,
 ) -> None:
     await select_alex(service, session_factory)
     await service.sync_selected("scheduled")
     with session_factory() as session:
-        store.get_state(session, "contributions", ALEX).cursor = clock.now.date().isoformat()
+        state = store.get_state(session, "contributions", ALEX)
+        state.cursor = legacy.format(day=clock.now.date().isoformat())
         session.commit()
+    clock.advance(hours=2)
+    fake_app.state.request_log.clear()
+    await service.sync_selected("scheduled")
+    start = service.contribution_window_start(clock.now)
+    backfill_after = (start - timedelta(days=2)).isoformat()
+    queries = [q for p, q in fake_app.state.request_log if p.endswith("/events")]
+    assert any(f"after={backfill_after}" in q for q in queries)
     clock.advance(hours=2)
     fake_app.state.request_log.clear()
     await service.sync_selected("scheduled")

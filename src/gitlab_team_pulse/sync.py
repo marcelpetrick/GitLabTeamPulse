@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -27,15 +27,25 @@ from gitlab_team_pulse.gitlab.models import (
     Timelog,
     WorkItem,
     counts_as_contribution,
+    history_metric,
 )
 from gitlab_team_pulse.logging_setup import get_logger
-from gitlab_team_pulse.models import SyncRun
+from gitlab_team_pulse.models import Milestone, SyncRun, User, WorkItemAssignee, WorkItemRecord
 
 log = get_logger("sync")
 
 Clock = Callable[[], datetime]
 RECENT_EVENTS = 12
 CONTRIBUTION_WEEKS = 53
+# Bumped when the event-derived history gains data: older cursors then refetch the year once.
+HISTORY_REVISION = "h1"
+# Late or edited time entries are picked up by re-reading this many days on every refresh.
+TIMELOG_RESWEEP_DAYS = 31
+HISTORY_CATEGORIES = ("contributions", "timelog_history", "outcomes")
+TOO_MANY_TRACKED = (
+    "More team members than TEAMPULSE_MAX_TRACKED_USERS: the history of {count} team "
+    "members is not refreshed"
+)
 
 
 def contribution_grid_start(today: date) -> date:
@@ -294,14 +304,9 @@ class SyncService:
         self.runtime.selected_scope = frozenset(user_ids) if user_ids is not None else None
         started = time.monotonic()
         try:
-            with self.session_factory() as session:
-                users = [
-                    (u.id, u.username)
-                    for u in store.selected_users(session)
-                    if user_ids is None or u.id in user_ids
-                ]
+            users, team_only = self.tracked_users(user_ids)
             try:
-                client = self.client() if users else None
+                client = self.client() if users or team_only else None
             except GitLabError as exc:
                 self._upstream(exc)
                 return self._finish_selected(
@@ -310,10 +315,17 @@ class SyncService:
             outcomes: list[tuple[int, int, set[int]]] = []
             if client is not None:
                 outcomes = await asyncio.gather(
-                    *(self._sync_user(client, uid, username, run_id) for uid, username in users)
+                    *(self._sync_user(client, uid, username, run_id) for uid, username in users),
+                    *(
+                        self._sync_user(client, uid, username, run_id, full=False)
+                        for uid, username in team_only
+                    ),
                 )
                 project_ids = set().union(*(ids for _, _, ids in outcomes))
                 await self._resolve_projects(client, project_ids)
+                if self.milestones_due(self.clock()):
+                    await self.sync_milestones(client, run_id)
+            outcomes = [o for o in outcomes if o[1]]
             ok_parts = sum(ok for ok, _, _ in outcomes)
             all_parts = sum(total for _, total, _ in outcomes)
             succeeded = sum(1 for ok, total, _ in outcomes if ok == total)
@@ -324,12 +336,12 @@ class SyncService:
             else:
                 status = "partial"
             summary = (
-                f"{succeeded}/{len(users)} users fully refreshed "
+                f"{succeeded}/{len(outcomes)} users fully refreshed "
                 f"({ok_parts}/{all_parts} datasets) in {time.monotonic() - started:.1f}s"
             )
             log.info("selected refresh (%s): %s", trigger, summary)
             return self._finish_selected(
-                run_id, user_ids, status, summary, attempted=len(users), succeeded=succeeded
+                run_id, user_ids, status, summary, attempted=len(outcomes), succeeded=succeeded
             )
         finally:
             self.runtime.selected_scope = None
@@ -377,17 +389,65 @@ class SyncService:
             session.commit()
         return status
 
+    def tracked_users(
+        self, user_ids: list[int] | None = None
+    ) -> tuple[list[tuple[int, str]], list[tuple[int, str]]]:
+        """(selected users, team members who are not selected), optionally limited to IDs.
+
+        Team members beyond ``max_tracked_users`` (counting the selection) are left out and
+        reported as a diagnostic; the dashboard selection itself is never capped.
+        """
+        with self.session_factory() as session:
+            selected = store.selected_users(session)
+            selected_ids = {u.id for u in selected}
+            members = store.tracked_team_user_ids(session) - selected_ids
+            extra = list(
+                session.scalars(select(User).where(User.id.in_(members)).order_by(User.id))
+            )
+            room = max(self.settings.max_tracked_users - len(selected), 0)
+            dropped = len(extra) - room
+            if dropped > 0:
+                store.record_error(
+                    session,
+                    subsystem="sync",
+                    operation="tracked_users",
+                    message=TOO_MANY_TRACKED.format(count=dropped),
+                    severity="warning",
+                    now=self.clock(),
+                )
+            else:
+                store.resolve_errors(
+                    session, subsystem="sync", operation="tracked_users", now=self.clock()
+                )
+            session.commit()
+        scope = None if user_ids is None else set(user_ids)
+        return (
+            [(u.id, u.username) for u in selected if scope is None or u.id in scope],
+            [(u.id, u.username) for u in extra[:room] if scope is None or u.id in scope],
+        )
+
     async def _sync_user(
-        self, client: GitLabClient, user_id: int, username: str, run_id: str
+        self, client: GitLabClient, user_id: int, username: str, run_id: str, *, full: bool = True
     ) -> tuple[int, int, set[int]]:
-        """Returns (successful datasets, attempted datasets, referenced project IDs)."""
-        jobs = [
-            self._sync_work(client, user_id, username, run_id),
-            self._sync_activity(client, user_id, run_id),
-            self._sync_timelogs(client, user_id, username, run_id),
-        ]
-        if self.contributions_due(user_id, self.clock()):
+        """Returns (successful datasets, attempted datasets, referenced project IDs).
+
+        ``full`` syncs the dashboard datasets; the hourly history categories run when due, also
+        for team members who are not on the dashboard (``full=False``).
+        """
+        now = self.clock()
+        jobs = []
+        if full:
+            jobs += [
+                self._sync_work(client, user_id, username, run_id),
+                self._sync_activity(client, user_id, run_id),
+                self._sync_timelogs(client, user_id, username, run_id),
+            ]
+        if self.history_due("contributions", user_id, now):
             jobs.append(self._sync_contributions(client, user_id, run_id))
+        if self.history_due("timelog_history", user_id, now):
+            jobs.append(self._sync_timelog_history(client, user_id, username, run_id))
+        if self.history_due("outcomes", user_id, now):
+            jobs.append(self._sync_outcomes(client, user_id, run_id))
         results = await asyncio.gather(*jobs)
         ok = sum(1 for success, _ in results if success)
         projects: set[int] = set().union(*(ids for _, ids in results))
@@ -576,18 +636,27 @@ class SyncService:
         """First day of the calendar grid in the configured time zone."""
         return contribution_grid_start(now.astimezone(self.settings.tz).date())
 
-    def contributions_due(self, user_id: int, now: datetime) -> bool:
-        """The calendar changes slowly: refresh at most every N minutes, not every run.
+    def history_due(self, category: str, user_id: int | None, now: datetime) -> bool:
+        """History changes slowly: refresh at most every N minutes, not every run.
 
         A failed attempt is retried on the next run, so a failed backfill does not leave the
-        calendar empty for a whole interval.
+        history empty for a whole interval.
         """
         with self.session_factory() as session:
-            state = store.find_state(session, "contributions", user_id)
+            state = store.find_state(session, category, user_id)
             if state is None or state.last_attempt_at is None or state.status in FAILED_STATUSES:
                 return True
             interval = timedelta(minutes=self.settings.contributions_refresh_minutes)
             return now >= state.last_attempt_at + interval
+
+    def contributions_due(self, user_id: int, now: datetime) -> bool:
+        return self.history_due("contributions", user_id, now)
+
+    def milestones_due(self, now: datetime) -> bool:
+        return self.settings.milestones_max > 0 and self.history_due("milestones", None, now)
+
+    def local_midnight(self, day: date) -> datetime:
+        return datetime.combine(day, datetime.min.time(), self.settings.tz).astimezone(UTC)
 
     async def _sync_contributions(
         self, client: GitLabClient, user_id: int, run_id: str
@@ -606,8 +675,10 @@ class SyncService:
             cursor = state.cursor if state and state.last_success_at else None
         from_day = start
         if cursor is not None:
-            last_day, _, cursor_zone = cursor.partition("@")
-            if not cursor_zone or cursor_zone == zone:
+            last_day, _, rest = cursor.partition("@")
+            cursor_zone, _, revision = rest.partition("@")
+            # Cursors from before the history revision lack per-project history: refetch once.
+            if cursor_zone == zone and revision == HISTORY_REVISION:
                 from_day = max(start, date.fromisoformat(last_day) - timedelta(days=1))
         tz = self.settings.tz
 
@@ -622,14 +693,157 @@ class SyncService:
             session: Session, events: list[ActivityEvent], stamp: datetime
         ) -> tuple[str, set[int]]:
             counts: dict[date, int] = {}
+            history: dict[tuple[date, int, str], int] = {}
             for event in events:
                 day = event.created_at.astimezone(tz).date()
-                if day >= from_day and counts_as_contribution(event):
+                if day < from_day:
+                    continue
+                if counts_as_contribution(event):
                     counts[day] = counts.get(day, 0) + 1
+                metric = history_metric(event)
+                if metric is not None:
+                    key = (day, event.project_id or 0, metric)
+                    history[key] = history.get(key, 0) + 1
             store.replace_contribution_days(session, user_id, counts, from_day)
-            return f"{stamp.astimezone(tz).date().isoformat()}@{zone}", set()
+            store.replace_activity_daily(session, user_id, history, from_day)
+            cursor = f"{stamp.astimezone(tz).date().isoformat()}@{zone}@{HISTORY_REVISION}"
+            return cursor, {pid for _, pid, _ in history if pid}
 
         return await self._category("contributions", user_id, run_id, fetch, write)
+
+    async def _sync_timelog_history(
+        self, client: GitLabClient, user_id: int, username: str, run_id: str
+    ) -> tuple[bool, set[int]]:
+        """Logged seconds per local day and project for the history window.
+
+        The first sync backfills the window; later syncs re-read the last weeks because time is
+        often logged late or edited. A changed time zone forces a full backfill.
+        """
+        now = self.clock()
+        tz = self.settings.tz
+        zone = self.settings.timezone
+        window = self.contribution_window_start(now)
+        with self.session_factory() as session:
+            state = store.find_state(session, "timelog_history", user_id)
+            cursor = state.cursor if state and state.last_success_at else None
+        from_day = window
+        if cursor is not None and cursor.partition("@")[2] == zone:
+            today = now.astimezone(tz).date()
+            from_day = max(window, today - timedelta(days=TIMELOG_RESWEEP_DAYS))
+        start = self.local_midnight(from_day)
+
+        def write(session: Session, logs: list[Timelog], stamp: datetime) -> tuple[str, set[int]]:
+            seconds: dict[tuple[date, int], tuple[str | None, int]] = {}
+            for entry in logs:
+                key = (entry.spent_at.astimezone(tz).date(), entry.project_id or 0)
+                path, total = seconds.get(key, (entry.project_path, 0))
+                seconds[key] = (path or entry.project_path, total + entry.seconds)
+            store.replace_timelog_daily(session, user_id, seconds, from_day)
+            stamp_day = stamp.astimezone(tz).date().isoformat()
+            return f"{stamp_day}@{zone}", {pid for _, pid in seconds if pid}
+
+        return await self._category(
+            "timelog_history",
+            user_id,
+            run_id,
+            lambda: client.get_user_timelogs(username, start, now),
+            write,
+        )
+
+    async def _sync_outcomes(
+        self, client: GitLabClient, user_id: int, run_id: str
+    ) -> tuple[bool, set[int]]:
+        """Merged MRs (author) and closed issues (assignee), incrementally by update time."""
+        now = self.clock()
+        with self.session_factory() as session:
+            state = store.find_state(session, "outcomes", user_id)
+            cursor = state.cursor if state and state.last_success_at else None
+        window = self.local_midnight(self.contribution_window_start(now))
+        updated_after = window
+        if cursor is not None:
+            updated_after = max(window, datetime.fromisoformat(cursor) - timedelta(days=1))
+
+        def write(session: Session, items: list[WorkItem], stamp: datetime) -> tuple[str, set[int]]:
+            store.apply_outcomes(session, user_id, items)
+            return now.isoformat(), {i.project_id for i in items if i.project_id is not None}
+
+        return await self._category(
+            "outcomes",
+            user_id,
+            run_id,
+            lambda: client.get_user_outcomes(user_id, updated_after),
+            write,
+        )
+
+    def milestones_to_refresh(self) -> list[Milestone]:
+        """Active milestones of open work of selected users, soonest due first."""
+        with self.session_factory() as session:
+            selected = select(User.id).where(User.selected.is_(True))
+            ids = select(WorkItemRecord.milestone_id).where(
+                WorkItemRecord.milestone_id.is_not(None),
+                WorkItemRecord.state.in_(("opened", "locked")),
+                WorkItemRecord.id.in_(
+                    select(WorkItemAssignee.work_item_id).where(
+                        WorkItemAssignee.user_id.in_(selected)
+                    )
+                ),
+            )
+            found = list(
+                session.scalars(
+                    select(Milestone).where(Milestone.id.in_(ids), Milestone.state == "active")
+                )
+            )
+        found.sort(key=lambda m: (m.due_date is None, m.due_date or date.max, m.title))
+        return found[: self.settings.milestones_max]
+
+    async def sync_milestones(self, client: GitLabClient, run_id: str) -> bool:
+        """Progress of the relevant milestones, computed from their issues (no Premium API).
+
+        A milestone that cannot be read keeps its last statistics; the others still update.
+        """
+        milestones = self.milestones_to_refresh()
+        results = await asyncio.gather(
+            *(
+                client.get_milestone_issues(m.id, project_id=m.project_id, group_id=m.group_id)
+                for m in milestones
+            ),
+            return_exceptions=True,
+        )
+        now = self.clock()
+        today = now.astimezone(self.settings.tz).date()
+        failures: list[str] = []
+        with self.session_factory() as session:
+            for milestone, result in zip(milestones, results, strict=True):
+                if isinstance(result, GitLabError):
+                    failures.append(f"{milestone.title}: {result}")
+                    continue
+                if isinstance(result, BaseException):
+                    failures.append(f"{milestone.title}: internal error {result!r}")
+                    continue
+                store.set_milestone_stats(
+                    session, milestone.id, store.milestone_stats(result, today), now
+                )
+            state = store.get_state(session, "milestones")
+            store.mark_attempt(state, now, run_id)
+            if failures:
+                message = "; ".join(failures)
+                store.mark_failure(state, message)
+                store.record_error(
+                    session,
+                    subsystem="sync",
+                    operation="milestones",
+                    message=f"Milestone progress could not be read: {message}",
+                    severity="warning",
+                    now=now,
+                )
+            else:
+                store.mark_success(state, now)
+                store.resolve_errors(session, subsystem="sync", operation="milestones", now=now)
+            store.bump_data_version(session)
+            session.commit()
+        if failures:
+            log.warning("milestones: %s", "; ".join(failures))
+        return not failures
 
     async def _resolve_projects(self, client: GitLabClient, project_ids: set[int]) -> None:
         """Fetch metadata only for referenced projects that are unknown or older than a day."""

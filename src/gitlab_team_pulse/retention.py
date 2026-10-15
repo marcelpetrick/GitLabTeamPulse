@@ -7,6 +7,9 @@ Rules (VISION section 18):
   last known good data is kept regardless of age.
 * The twelve newest events per user are always kept, even when older than the chart window.
 * Deselected users keep their short-lived cache until it is older than the retention period.
+* Team members who are not selected keep their history (daily aggregates and outcomes) while
+  their short-lived dashboard cache expires; leaving every team purges the history as well.
+* History aggregates never outlive the 53-week calendar window.
 * Selection state is never touched; resolved diagnostics and old runs expire.
 """
 
@@ -21,12 +24,16 @@ from sqlalchemy.orm import Session
 from gitlab_team_pulse import store
 from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.models import (
+    ActivityDaily,
     ActivityEventRecord,
     ContributionDay,
     ErrorRecord,
+    Milestone,
+    Outcome,
     Project,
     SyncRun,
     SyncState,
+    TimelogDaily,
     TimelogRecord,
     User,
     WorkItemAssignee,
@@ -35,8 +42,16 @@ from gitlab_team_pulse.models import (
 
 RECENT_EVENTS_KEPT = 12
 VACUUM_FREE_PAGES = 256
-USER_CATEGORIES = ("work", "activity", "timelogs", "contributions")
+DASHBOARD_CATEGORIES = ("work", "activity", "timelogs")
+HISTORY_CATEGORIES = ("contributions", "timelog_history", "outcomes")
+USER_CATEGORIES = (*DASHBOARD_CATEGORIES, *HISTORY_CATEGORIES)
 CONTRIBUTION_DAYS_KEPT = 7 * 54  # the 53-week grid plus a week of slack
+HISTORY_TABLES = (
+    (ContributionDay, "contribution_days"),
+    (ActivityDaily, "history_days"),
+    (TimelogDaily, "history_days"),
+    (Outcome, "outcomes"),
+)
 
 
 @dataclass
@@ -44,6 +59,9 @@ class CleanupStats:
     events: int = 0
     timelogs: int = 0
     contribution_days: int = 0
+    history_days: int = 0
+    outcomes: int = 0
+    milestones: int = 0
     work_links: int = 0
     work_items: int = 0
     projects: int = 0
@@ -89,18 +107,35 @@ def _trim_events(session: Session, user_id: int, before: datetime) -> int:
     return int(result.rowcount)  # type: ignore[attr-defined]
 
 
+def _count(stats: CleanupStats, attr: str, result: object) -> None:
+    setattr(stats, attr, getattr(stats, attr) + int(result.rowcount))  # type: ignore[attr-defined]
+
+
+def _purge_dashboard_cache(session: Session, user_id: int, stats: CleanupStats) -> None:
+    """Drop the short-lived dashboard facts and their sync states of one user."""
+    for model, attr in ((ActivityEventRecord, "events"), (TimelogRecord, "timelogs")):
+        _count(stats, attr, session.execute(delete(model).where(model.user_id == user_id)))
+    _count(
+        stats,
+        "work_links",
+        session.execute(delete(WorkItemAssignee).where(WorkItemAssignee.user_id == user_id)),
+    )
+    _count(
+        stats,
+        "states",
+        session.execute(
+            delete(SyncState).where(
+                SyncState.user_id == user_id, SyncState.category.in_(DASHBOARD_CATEGORIES)
+            )
+        ),
+    )
+
+
 def _purge_user(session: Session, user_id: int, stats: CleanupStats) -> None:
-    for model, attr in (
-        (ActivityEventRecord, "events"),
-        (TimelogRecord, "timelogs"),
-        (ContributionDay, "contribution_days"),
-    ):
-        result = session.execute(delete(model).where(model.user_id == user_id))
-        setattr(stats, attr, getattr(stats, attr) + int(result.rowcount))  # type: ignore[attr-defined]
-    result = session.execute(delete(WorkItemAssignee).where(WorkItemAssignee.user_id == user_id))
-    stats.work_links += int(result.rowcount)  # type: ignore[attr-defined]
-    result = session.execute(delete(SyncState).where(SyncState.user_id == user_id))
-    stats.states += int(result.rowcount)  # type: ignore[attr-defined]
+    _purge_dashboard_cache(session, user_id, stats)
+    for model, attr in HISTORY_TABLES:
+        _count(stats, attr, session.execute(delete(model).where(model.user_id == user_id)))
+    _count(stats, "states", session.execute(delete(SyncState).where(SyncState.user_id == user_id)))
 
 
 def cleanup(session: Session, settings: Settings, now: datetime) -> CleanupStats:
@@ -117,11 +152,17 @@ def cleanup(session: Session, settings: Settings, now: datetime) -> CleanupStats
         | {s.user_id for s in states.values() if s.user_id is not None}
     )
     selected = set(session.scalars(select(User.id).where(User.selected.is_(True))))
+    in_teams = store.tracked_team_user_ids(session)
 
     for user_id in sorted(user_ids_with_data):
         user_states = [states.get(store.state_key(c, user_id)) for c in USER_CATEGORIES]
         if user_id not in selected:
-            if not any(_recent(state, cutoff) for state in user_states):
+            if user_id in in_teams:
+                # History stays; only the dashboard cache expires once it is no longer updated.
+                dashboard = [states.get(store.state_key(c, user_id)) for c in DASHBOARD_CATEGORIES]
+                if not any(_recent(state, cutoff) for state in dashboard):
+                    _purge_dashboard_cache(session, user_id, stats)
+            elif not any(_recent(state, cutoff) for state in user_states):
                 _purge_user(session, user_id, stats)
             continue
         activity_state = states.get(store.state_key("activity", user_id))
@@ -140,20 +181,33 @@ def cleanup(session: Session, settings: Settings, now: datetime) -> CleanupStats
         elif timelog_state is not None:
             stats.kept_last_known_good.append(f"timelogs:{user_id}")
 
-    # The calendar only ever shows 53 weeks; older days are never needed again.
-    result = session.execute(
-        delete(ContributionDay).where(
-            ContributionDay.day < (now - timedelta(days=CONTRIBUTION_DAYS_KEPT)).date()
-        )
-    )
-    stats.contribution_days += int(result.rowcount)  # type: ignore[attr-defined]
+    # The calendar and the history only ever cover 53 weeks; older days are never needed again.
+    oldest_day = (now - timedelta(days=CONTRIBUTION_DAYS_KEPT)).date()
+    for day_model, attr in (
+        (ContributionDay, "contribution_days"),
+        (ActivityDaily, "history_days"),
+        (TimelogDaily, "history_days"),
+    ):
+        _count(stats, attr, session.execute(delete(day_model).where(day_model.day < oldest_day)))
+    oldest = now - timedelta(days=CONTRIBUTION_DAYS_KEPT)
+    _count(stats, "outcomes", session.execute(delete(Outcome).where(Outcome.finished_at < oldest)))
 
     stats.work_items += store.delete_orphan_work_items(session)
+
+    used = exists().where(WorkItemRecord.milestone_id == Milestone.id)
+    _count(
+        stats,
+        "milestones",
+        session.execute(delete(Milestone).where(Milestone.seen_at < cutoff, ~used)),
+    )
 
     referenced = or_(
         exists().where(WorkItemRecord.project_id == Project.id),
         exists().where(ActivityEventRecord.project_id == Project.id),
         exists().where(TimelogRecord.project_id == Project.id),
+        exists().where(ActivityDaily.project_id == Project.id),
+        exists().where(TimelogDaily.project_id == Project.id),
+        exists().where(Outcome.project_id == Project.id),
     )
     result = session.execute(delete(Project).where(Project.refreshed_at < cutoff, ~referenced))
     stats.projects += int(result.rowcount)  # type: ignore[attr-defined]
