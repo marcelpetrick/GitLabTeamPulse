@@ -210,3 +210,69 @@ def test_contribution_calendar_2d_and_3d(page: Page, stack: LiveStack) -> None:
 
     section.get_by_role("button", name="Reset view").click()
     assert canvas.evaluate(snapshot) == initial
+
+
+def test_attention_strip_milestones_and_estimates(page: Page, stack: LiveStack) -> None:
+    select_alex(page, stack)
+    page.click("#tab-dashboard")
+    attention = page.locator("section.attention")
+    expect(attention.locator(".attention-row").first).to_be_visible(timeout=30000)
+    stalled = attention.locator('.attention-tile[data-code="stalled"]')
+    expect(stalled.locator(".count")).not_to_have_text("0")
+    stalled.click()
+    expect(stalled).to_have_attribute("aria-pressed", "true")
+    rows = attention.locator(".attention-row")
+    for index in range(rows.count()):
+        expect(rows.nth(index).locator('[data-reason="stalled"]')).to_contain_text("No update for")
+    stalled.click()  # a second click shows everything again
+    expect(attention.locator('.attention-tile[data-code="all"]')).to_have_attribute(
+        "aria-pressed", "true"
+    )
+    milestones = page.locator("section.milestones")
+    expect(milestones.locator(".milestone").first).to_be_visible(timeout=30000)
+    expect(milestones.locator(".milestone-progress").first).to_contain_text("closed")
+
+    card = page.locator(f'article.card[data-user-id="{ALEX}"]')
+    expect(card.locator('[data-alert="stalled"]')).to_be_visible()
+    expect(card.locator("tr.is-stalled").first).to_contain_text("no update for")
+    card.get_by_role("button", name="No estimate").click()
+    expect(card.locator(".work .panel-head h3")).to_contain_text("Work ·")
+    rows = card.locator(".work-table tbody tr")
+    if rows.count() == 0:
+        expect(card.locator(".work .card-empty")).to_have_text("No items match this filter.")
+    for index in range(rows.count()):  # "no estimate", or time spent without an estimate
+        expect(rows.nth(index).locator(".time-chip")).to_have_text(re.compile(r"no estimate|/ —$"))
+
+
+def test_create_team_see_report_and_show_it_on_the_dashboard(page: Page, stack: LiveStack) -> None:
+    page.goto(f"{stack.url}/#/teams")
+    expect(page.get_by_role("heading", name="No teams yet")).to_be_visible()
+    page.click("#new-team")
+    editor = page.locator("#team-editor")
+    page.fill("#team-name", "Platform")
+    expect(editor.locator(".member-option").first).to_be_visible()
+    editor.get_by_placeholder("Filter people…").fill("alex.berger")
+    editor.locator(f"#member-{ALEX}").check()
+    editor.get_by_placeholder("Filter people…").fill("sam.kowalski")
+    editor.locator(".member-option input").first.check()
+    page.fill("#team-scope", "platform")
+    editor.get_by_role("button", name="Add").click()
+    expect(editor.locator(".scope-chip")).to_contain_text("platform")
+    page.click("#save-team")
+    expect(editor).to_be_hidden()
+    expect(page.locator("#tab-teams-count")).to_have_text("1")
+    expect(page.locator(".team-head h2")).to_have_text("Platform")
+    # The history of both members loads in the background; then the quarter has data.
+    page.get_by_role("button", name="Quarter").click()
+    expect(page.locator(".pill.fresh", has_text="History")).to_be_visible(timeout=60000)
+    expect(page.locator('.kpi[data-kpi="hours"] .kpi-value')).not_to_have_text("0m")
+    expect(page.locator(".share-table tbody tr").first).to_contain_text("platform/")
+    page.get_by_role("button", name="Previous period").click()
+    expect(page.locator(".period-label")).to_contain_text("Q")
+    page.locator(".counting summary").click()
+    expect(page.locator(".counting dl")).to_contain_text("Knowledge spread")
+
+    page.once("dialog", lambda dialog: dialog.accept())
+    page.get_by_role("button", name="Show on dashboard").click()
+    expect(page).to_have_url(re.compile(r"#/dashboard$"))
+    expect(page.locator("article.card[data-user-id]")).to_have_count(2, timeout=30000)
