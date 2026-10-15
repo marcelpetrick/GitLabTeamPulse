@@ -392,6 +392,12 @@ def test_every_control_and_figure_has_a_tooltip(page: Page, stack: LiveStack) ->
     expect(page.locator("article.card .work-table")).to_be_visible(timeout=30000)
     expect(page.locator(".milestone-progress").first).to_be_visible(timeout=30000)
     missing = {"dashboard": missing_tooltips(page)}
+    # Tooltips state the configured numbers, not hard-coded defaults.
+    stalled_reason = page.locator('.attention [data-reason="stalled"]').first
+    expect(stalled_reason).to_have_attribute("title", re.compile(r"for 7 days or more"))
+    expect(page.locator(".stat", has_text="work items").first).to_have_attribute(
+        "title", re.compile(r"last 30 days")
+    )
     card = page.locator(f'article.card[data-user-id="{ALEX}"]')
     card.get_by_role("button", name="3D skyline").click()
     expect(card.locator("canvas.skyline-canvas")).to_be_visible()

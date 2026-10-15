@@ -64,7 +64,7 @@ export class Diagnostics {
       this.box("GitLab", status.gitlab.configured ? status.gitlab.url : "not configured"),
       this.box("Accounts", `${status.users.known} known · ${status.users.selected} selected`),
     ) : null;
-    const toggle = h("label", { class: "muted", title: "Also list problems that were solved by a later successful refresh (kept for a week)" },
+    const toggle = h("label", { class: "muted", title: "Also list problems that were solved by a later successful refresh (kept for a few days)" },
       h("input", { type: "checkbox", checked: this.includeResolved, onchange: (e) => { this.includeResolved = e.target.checked; this.load(); } }),
       " Show resolved problems");
     const list = h("ul", { class: "diag-list" });

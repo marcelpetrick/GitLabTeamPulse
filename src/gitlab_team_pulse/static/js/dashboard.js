@@ -71,7 +71,7 @@ function timeChip(item) {
 }
 
 const STAT_TITLES = {
-  "work items": "Assigned issues and merge requests plus MRs to review: updated in the last 30 days, and every open one however old",
+  "work items": (days) => `Assigned issues and merge requests plus MRs to review: updated in the last ${days} days, and every open one however old`,
   "actions · 7 days": "GitLab events of this person in the last 7 days: pushes, comments, issues, merge requests and more",
   "logged · 7 days": "Time this person logged in GitLab time tracking in the last 7 days (never estimated)",
 };
@@ -79,7 +79,7 @@ const WORK_FILTER_TITLES = {
   all: "Every item in the list",
   open: "Only open items",
   done: "Only closed issues and closed or merged merge requests",
-  stalled: "Open items assigned to this person without any update for a week or more",
+  stalled: (days) => `Open items assigned to this person without any update for ${days} days or more`,
   overdue: "Open items assigned to this person whose due date has passed",
   unestimated: "Open issues without a time estimate in GitLab",
 };
@@ -284,7 +284,9 @@ export class DashboardView {
   }
 
   stat(value, label, extra = null, warn = false) {
-    const title = warn ? "No time logged in GitLab during the last 7 days" : STAT_TITLES[label] || label;
+    const windowDays = this.app.dashboard?.work_window_days || 30;
+    const text = STAT_TITLES[label];
+    const title = warn ? "No time logged in GitLab during the last 7 days" : (typeof text === "function" ? text(windowDays) : text) || label;
     return h("div", { class: `stat${warn ? " warn" : ""}`, title },
       h("span", { class: "value" }, warn ? [icon("warning"), " ", String(value)] : String(value)),
       h("span", { class: "label" }, extra ? `${label} · ${extra}` : label));
@@ -440,7 +442,9 @@ export class DashboardView {
       [["all", "All"], ["open", "Open"], ["done", "Closed / merged"], ["stalled", "Stalled"], ["overdue", "Overdue"], ["unestimated", "No estimate"]].map(([key, label]) =>
         h("button", {
           type: "button", "aria-pressed": String(state.filter === key), dataset: { filter: key },
-          title: WORK_FILTER_TITLES[key],
+          title: typeof WORK_FILTER_TITLES[key] === "function"
+            ? WORK_FILTER_TITLES[key](this.app.dashboard?.attention?.stalled_days || 7)
+            : WORK_FILTER_TITLES[key],
           onclick: () => {
             state.filter = key;
             for (const b of filterGroup.children) b.setAttribute("aria-pressed", String(b.dataset.filter === key));

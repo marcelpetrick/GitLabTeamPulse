@@ -17,7 +17,7 @@ const KPIS = [
 ];
 const collator = new Intl.Collator("en", { sensitivity: "base", numeric: true });
 const KPI_TITLES = {
-  hours: "Time the team members logged in GitLab in this period; the change compares with the same number of days of the previous period",
+  hours: "Time the team members logged in GitLab in this period; the change compares with the previous period (with the same number of days while this period is still running)",
   mrs_merged: "Merged merge requests authored by team members, each counted once",
   issues_closed: "Closed issues currently assigned to team members, each counted once",
   mrs_opened: "Merge requests opened by team members",

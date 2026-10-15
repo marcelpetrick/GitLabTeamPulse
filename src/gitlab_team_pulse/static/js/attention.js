@@ -42,7 +42,7 @@ function reasonText(reason) {
 
 const SEVERITY_BADGE = { error: "err", warning: "warn", info: "info" };
 const REASON_TITLES = {
-  stalled: "Open and assigned, but nothing changed for a week or more: probably blocked or forgotten",
+  stalled: (a) => `Open and assigned, but nothing changed for ${a.stalled_days} days or more: probably blocked or forgotten`,
   overdue: "The due date has passed and the item is still open",
   due_soon: "Due within the next days",
   review: "A monitored person is asked to review this merge request (age since it was opened; idle = days without any change)",
@@ -51,6 +51,12 @@ const REASON_TITLES = {
   unmonitored_reviewer: "The reviewers are colleagues who are not monitored on this dashboard",
 };
 
+function reasonTitle(code, attention) {
+  const title = REASON_TITLES[code];
+  if (typeof title === "function") return title(attention);
+  return title || code;
+}
+
 export class AttentionPanel {
   constructor() {
     this.filter = "all";
@@ -58,6 +64,7 @@ export class AttentionPanel {
   }
 
   render(attention, people) {
+    this.attention = attention;
     const section = h("section", { class: "attention", "aria-labelledby": "attention-title" });
     const items = attention.items;
     const head = h("div", { class: "attention-head" },
@@ -129,7 +136,7 @@ export class AttentionPanel {
           h("span", {}, people.join(", ")),
           item.milestone ? [h("span", { class: "faint" }, "·"), h("span", {}, item.milestone)] : null)),
       h("div", { class: "attention-reasons" },
-        item.reasons.map((reason) => h("span", { class: `badge ${SEVERITY_BADGE[reason.severity]}`, dataset: { reason: reason.code }, title: REASON_TITLES[reason.code] || reason.code },
+        item.reasons.map((reason) => h("span", { class: `badge ${SEVERITY_BADGE[reason.severity]}`, dataset: { reason: reason.code }, title: reasonTitle(reason.code, this.attention) },
           reason.severity === "error" ? icon("warning") : null, reasonText(reason)))),
       h("div", { class: "attention-updated muted" }, "updated ", rel(item.updated_at)));
   }

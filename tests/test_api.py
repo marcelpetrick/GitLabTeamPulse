@@ -93,6 +93,7 @@ def test_dashboard_payload(api: tuple[TestClient, AppContext]) -> None:
     empty = client.get("/api/dashboard").json()
     assert empty["cards"] == []
     assert empty["activity_days"] == 7
+    assert empty["work_window_days"] == 30
     assert client.portal is not None
     client.portal.call(context.service.sync_directory, "startup")
     client.patch(f"/api/users/{ALEX}/selection", json={"selected": True})

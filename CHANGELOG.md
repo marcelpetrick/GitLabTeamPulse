@@ -11,6 +11,8 @@ The full per-commit history is `git log --oneline` (each subject ends with its v
 - A browser test fails when any visible control or figure in the dashboard, Teams, People,
   Diagnostics, About, the team editor or the outage state has no tooltip.
 - AGENTS.md: the tooltip rule and the decision to stay on Python 3.14.
+- Branch review fix: tooltips state the configured thresholds (stalled days, work window)
+  instead of the defaults.
 
 ## 0.4.2 (2026-10-15): reviewable alerts, one diagnostics entry, faster loads, bug fixes
 

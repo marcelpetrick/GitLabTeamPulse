@@ -227,6 +227,7 @@ def api_router() -> APIRouter:
                 "data_version": status_payload["data_version"],
                 "timezone": context.settings.timezone,
                 "activity_days": context.settings.activity_days,
+                "work_window_days": context.settings.work_window_days,
                 "status": status_payload,
                 **reader.overview(store.selected_users(session)),
             }
