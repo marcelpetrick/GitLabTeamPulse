@@ -22,7 +22,7 @@ export const ATTENTION_TILES = [
   ["review", "Waiting for review", () => "Open merge requests where a monitored person is a reviewer."],
   ["cannot_merge", "Can't merge", () => "Conflicts, rebase needed, pipeline must pass, unresolved threads or changes requested."],
   ["no_reviewer", "No reviewer", () => "Open merge requests of monitored people without any reviewer."],
-  ["outside_reviewer", "Reviewer outside", () => "Open merge requests whose reviewers are all outside the monitored people."],
+  ["unmonitored_reviewer", "Reviewer not monitored", () => "Open merge requests whose reviewers are all colleagues who are not monitored on this dashboard — not necessarily people outside the company. Useful to see review dependencies on others."],
 ];
 
 function reasonText(reason) {
@@ -35,7 +35,7 @@ function reasonText(reason) {
       : `Review waiting · opened ${reason.days} d ago`;
     case "cannot_merge": return `Can't merge: ${reason.problems.map((p) => MERGE_PROBLEM_TEXT[p] || p).join(", ")}`;
     case "no_reviewer": return "No reviewer assigned";
-    case "outside_reviewer": return `Reviewer outside the team: ${reason.reviewers.map((r) => `@${r}`).join(", ")}`;
+    case "unmonitored_reviewer": return `Reviewed by ${reason.reviewers.map((r) => (r.name && r.name !== r.username ? `${r.name} (@${r.username})` : `@${r.username}`)).join(", ")} · not monitored here`;
     default: return reason.code;
   }
 }
@@ -70,7 +70,7 @@ export class AttentionPanel {
       this.tile("all", "All", items.length, "Everything that needs attention.", "neutral"),
       ATTENTION_TILES.map(([code, label, tip]) => {
         const count = attention.counts[code] || 0;
-        const severity = ["stalled", "overdue"].includes(code) ? "error" : ["outside_reviewer"].includes(code) ? "info" : "warning";
+        const severity = ["stalled", "overdue"].includes(code) ? "error" : ["unmonitored_reviewer"].includes(code) ? "info" : "warning";
         return this.tile(code, label, count, tip(attention), count ? severity : "zero");
       }));
     const renderList = () => {

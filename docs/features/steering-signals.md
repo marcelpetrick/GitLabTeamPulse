@@ -22,7 +22,7 @@ people share it. The tiles count and filter:
 | Waiting for review | Open, non-draft MR with a monitored reviewer (age and idle days) | warning after 2 days |
 | Can't merge | `has_conflicts`, or `detailed_merge_status` conflict, need_rebase, ci_must_pass, discussions_not_resolved, requested_changes, blocked_status, or unresolved blocking threads | warning |
 | No reviewer | Open, non-draft MR of a monitored person without any reviewer | warning |
-| Reviewer outside | Open, non-draft MR whose reviewers are all outside the monitored people | info |
+| Reviewer not monitored | Open, non-draft MR whose reviewers are all people who are not monitored on this dashboard. These are usually colleagues, not people outside the company; GitLab offers no reliable affiliation. Useful to see review dependencies on others | info |
 
 Open items are listed **regardless of age**: besides the work updated in the last
 `TEAMPULSE_WORK_WINDOW_DAYS`, every sync also lists all open issues and MRs of each person

@@ -146,5 +146,12 @@ Requested 2026-10-15 after the v0.4.0 release. Branch: `feature/about-and-showca
    the team editor and the About dialog.
 4. **README showcase**: a "New in 0.4" section with the attention strip, milestones, team report
    and team editor.
-5. Tests (API and browser), full pipeline, `/reviewBranch`, fixes, changelog, v0.4.1 release,
+5. **"Reviewer outside" was misleading** (reported for colleagues such as @ERamirez): the signal
+   only means "no reviewer among the people monitored on this dashboard", not "outside the
+   company" — GitLab gives no reliable affiliation without admin e-mail access. Rename it to
+   *Reviewer not monitored*, explain it in the tooltip, and show reviewers with their full name
+   from the user directory.
+6. **Versions**: bump the app to 0.4.1 and re-check every dependency against its latest stable
+   release.
+7. Tests (API and browser), full pipeline, `/reviewBranch`, fixes, changelog, v0.4.1 release,
    restart the dashboard and show it in Firefox.

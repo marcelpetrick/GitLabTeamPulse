@@ -117,7 +117,9 @@ def test_attention_reasons(session_factory: sessionmaker[Session], settings: Set
         "no_reviewer": {"code": "no_reviewer", "severity": "warning"}
     }
     six = reasons(payload, "platform/api!6")
-    assert six["outside_reviewer"]["reviewers"] == ["outsider"]
+    assert six["unmonitored_reviewer"]["reviewers"] == [
+        {"username": "outsider", "name": "Out Sider"}
+    ]
     assert six["cannot_merge"]["problems"] == ["conflict"]
     seven = next(i for i in attention["items"] if i["reference"] == "platform/api!7")
     assert {p["username"] for p in seven["people"]} == {"alex", "sam"}  # one row per item
@@ -130,7 +132,7 @@ def test_attention_reasons(session_factory: sessionmaker[Session], settings: Set
         "review": 1,
         "cannot_merge": 2,
         "no_reviewer": 1,
-        "outside_reviewer": 1,
+        "unmonitored_reviewer": 1,
     }
     card = next(c for c in payload["cards"] if c["user"]["id"] == ALEX)
     assert (card["counts"]["stalled"], card["counts"]["overdue"]) == (1, 1)

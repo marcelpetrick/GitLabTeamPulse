@@ -193,7 +193,7 @@ ATTENTION_CODES = (
     "review",
     "cannot_merge",
     "no_reviewer",
-    "outside_reviewer",
+    "unmonitored_reviewer",
 )
 
 
@@ -235,6 +235,7 @@ class DashboardReader:
         self.settings = settings
         self.runtime = runtime
         self.now = now
+        self._names: dict[str, str] = {}
 
     def _projects(self, ids: set[int]) -> dict[int, Project]:
         if not ids:
@@ -306,10 +307,18 @@ class DashboardReader:
         """Open items across the monitored people that need someone to act, one row per item.
 
         Reasons: stalled (no update for ``stalled_days``), overdue, due soon, waiting for review,
-        cannot merge, and MRs without a reviewer among the monitored people.
+        cannot merge, MRs without any reviewer, and MRs whose reviewers are all people who are
+        not monitored on this dashboard (colleagues, not necessarily external).
         """
         today = self.today()
         monitored = {u.username for u in users}
+        reviewers = {r for items in work.values() for i in items for r in i["reviewers"]}
+        self._names = {}
+        if reviewers:
+            rows_found = self.session.execute(
+                select(User.username, User.name).where(User.username.in_(reviewers))
+            ).all()
+            self._names = {row.username: row.name for row in rows_found}
         rows: dict[int, dict[str, Any]] = {}
         for user in users:
             for item in work.get(user.id, []):
@@ -383,10 +392,14 @@ class DashboardReader:
                 if not reviewers:
                     reasons["no_reviewer"] = {"code": "no_reviewer", "severity": "warning"}
                 elif not reviewers & monitored:
-                    reasons["outside_reviewer"] = {
-                        "code": "outside_reviewer",
+                    # Not "outside the company": only none of the reviewers is monitored here.
+                    reasons["unmonitored_reviewer"] = {
+                        "code": "unmonitored_reviewer",
                         "severity": "info",
-                        "reviewers": sorted(reviewers),
+                        "reviewers": [
+                            {"username": name, "name": self._names.get(name, name)}
+                            for name in sorted(reviewers)
+                        ],
                     }
         if is_mr and not item["draft"]:
             if "reviewer" in relations:
