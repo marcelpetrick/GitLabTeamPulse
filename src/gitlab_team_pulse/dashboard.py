@@ -698,6 +698,11 @@ def build_status(
         "now": now,
         "data_version": store.data_version(session),
         "users_version": store.users_version(session),
+        "teams_version": store.teams_version(session),
+        "teams": {
+            "readonly": settings.teams_readonly,
+            "person_breakdown": settings.team_person_breakdown,
+        },
         "timezone": settings.timezone,
         "ui_poll_interval_seconds": settings.ui_poll_interval_seconds,
         "crawler": {

@@ -11,14 +11,14 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from gitlab_team_pulse import __version__, dashboard, db, store
+from gitlab_team_pulse import __version__, dashboard, db, store, teams
 from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.logging_setup import configure_logging, get_logger
-from gitlab_team_pulse.models import User
+from gitlab_team_pulse.models import Team, User
 from gitlab_team_pulse.scheduler import Scheduler
 from gitlab_team_pulse.sync import ClientFactory, SyncService, default_client_factory
 
@@ -52,6 +52,13 @@ class AppContext:
 
 class SelectionUpdate(BaseModel):
     selected: bool
+
+
+class TeamInput(BaseModel):
+    name: str = Field(max_length=200)
+    description: str = Field(default="", max_length=2000)
+    member_ids: list[int] = Field(default_factory=list, max_length=500)
+    scopes: list[str] = Field(default_factory=list, max_length=100)
 
 
 def ctx(request: Request) -> AppContext:
@@ -260,6 +267,131 @@ def api_router() -> APIRouter:
                     session, limit=limit, include_resolved=include_resolved
                 ),
             }
+
+    def writable(context: AppContext) -> None:
+        if context.settings.teams_readonly:
+            raise HTTPException(
+                status_code=403, detail="Teams are read-only here (TEAMPULSE_TEAMS_READONLY)"
+            )
+
+    def teams_body(context: AppContext, session: Session) -> dict[str, Any]:
+        return {
+            "teams_version": store.teams_version(session),
+            "readonly": context.settings.teams_readonly,
+            "teams": teams.team_payloads(session, context.settings),
+        }
+
+    def save(context: AppContext, team_id: int | None, body: TeamInput) -> dict[str, Any]:
+        writable(context)
+        now = context.service.clock()
+        with context.session_factory() as session:
+            team = None
+            before: set[int] = set()
+            if team_id is not None:
+                team = session.get(Team, team_id)
+                if team is None:
+                    raise HTTPException(status_code=404, detail="unknown team")
+                before = set(store.team_members(session, [team_id]).get(team_id, []))
+            try:
+                name, members, scopes = teams.validate_team(
+                    session,
+                    team_id=team_id,
+                    name=body.name,
+                    member_ids=body.member_ids,
+                    scopes=body.scopes,
+                )
+            except teams.TeamError as exc:
+                raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+            team = store.save_team(
+                session,
+                team,
+                name=name,
+                description=body.description.strip(),
+                member_ids=members,
+                scopes=scopes,
+                now=now,
+            )
+            store.bump_teams_version(session)
+            store.bump_data_version(session)
+            session.commit()
+            saved_id = team.id
+            payload: dict[str, Any] = next(
+                t for t in teams.team_payloads(session, context.settings) if t["id"] == saved_id
+            )
+        for user_id in sorted(set(members) - before):
+            context.scheduler.request_user_sync(user_id)  # load the new member's history now
+        log.info("team=%d saved with %d members", saved_id, len(members))
+        return payload
+
+    @router.get("/teams")
+    def list_teams(request: Request) -> dict[str, Any]:
+        context = ctx(request)
+        with context.session_factory() as session:
+            return teams_body(context, session)
+
+    @router.post("/teams", status_code=201)
+    def create_team(request: Request, body: TeamInput) -> dict[str, Any]:
+        return save(ctx(request), None, body)
+
+    @router.put("/teams/{team_id}")
+    def update_team(request: Request, team_id: int, body: TeamInput) -> dict[str, Any]:
+        return save(ctx(request), team_id, body)
+
+    @router.delete("/teams/{team_id}", status_code=204)
+    def delete_team(request: Request, team_id: int) -> Response:
+        context = ctx(request)
+        writable(context)
+        with context.session_factory() as session:
+            team = session.get(Team, team_id)
+            if team is None:
+                raise HTTPException(status_code=404, detail="unknown team")
+            session.delete(team)
+            store.bump_teams_version(session)
+            store.bump_data_version(session)
+            session.commit()
+        log.info("team=%d deleted", team_id)
+        return Response(status_code=204)
+
+    @router.post("/teams/{team_id}/apply")
+    def apply_team(request: Request, team_id: int) -> dict[str, Any]:
+        """Make the team's members the shared dashboard selection."""
+        context = ctx(request)
+        with context.session_factory() as session:
+            if session.get(Team, team_id) is None:
+                raise HTTPException(status_code=404, detail="unknown team")
+            members = set(store.team_members(session, [team_id]).get(team_id, []))
+            added, removed = store.apply_selection(session, members, context.service.clock())
+            store.bump_data_version(session)
+            store.bump_users_version(session)
+            session.commit()
+        for user_id in sorted(added):
+            context.scheduler.request_user_sync(user_id)
+        log.info("team=%d applied: %d selected, %d deselected", team_id, len(added), removed)
+        return {"selected": len(members), "added": len(added), "removed": removed}
+
+    @router.get("/teams/{team_id}/report")
+    def team_report(
+        request: Request,
+        team_id: int,
+        period: teams.Period = "month",
+        offset: int = Query(default=0, ge=0, le=60),
+    ) -> dict[str, Any]:
+        context = ctx(request)
+        with context.session_factory() as session:
+            reporter = teams.TeamReporter(session, context.settings, context.service.clock())
+            report = reporter.report(team_id, period, offset)
+        if report is None:
+            raise HTTPException(status_code=404, detail="unknown team")
+        return report
+
+    @router.get("/teams/{team_id}/digest")
+    def team_digest(request: Request, team_id: int) -> dict[str, Any]:
+        context = ctx(request)
+        with context.session_factory() as session:
+            result = teams.digest(session, context.settings, context.service.clock(), team_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="unknown team")
+        return result
 
     @router.post("/refresh", status_code=202)
     async def refresh(request: Request) -> JSONResponse:
