@@ -311,6 +311,8 @@ appended, e.g. `feat(docker): … (v0.1.0)`. See [`CHANGELOG.md`](CHANGELOG.md).
   diagrams (context, containers, components, dynamic, data and deployment views).
 - [`docs/GRAPHQL.md`](docs/GRAPHQL.md): what GraphQL is, why it is used for timelogs and
   epics, and how many requests it saves compared with REST.
+- [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md): profiling of startup, sync, API reads and the
+  browser on real data, and what was changed or decided because of it.
 - [`docs/features/steering-signals.md`](docs/features/steering-signals.md): needs attention,
   milestones, teams and team reports: rules, counting, GitLab Free workarounds and load.
 - [`ideas20261015.md`](ideas20261015.md) and [`plan.md`](plan.md): the reviewed feature ideas
