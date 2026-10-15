@@ -105,6 +105,8 @@ diagnostics drawer (screenshot above).
 - **Low GitLab load**: detailed crawling only for selected users, project metadata only on
   demand, incremental activity sync, bounded concurrency, and retries with backoff and jitter.
   Authentication errors fail fast.
+- **Self-explaining UI**: every button, filter, number, badge and column header has a tooltip
+  that says what it is, how it is counted and what clicking does (enforced by a browser test).
 - **About dialog**: version, author, license, source link and the runtime dependencies with
   their versions and licenses, read from the installed package.
 - **Polished, dependency-free UI**: plain HTML, CSS and ES modules served by FastAPI, native

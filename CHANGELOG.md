@@ -3,6 +3,15 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.4.3 (2026-10-15): tooltips everywhere
+
+- Every button, filter, select, input, link, number, status pill, badge, KPI tile, attention
+  tile and reason, milestone part and table header explains itself on hover: what it is, how it
+  is counted and what clicking does. Links say where they go.
+- A browser test fails when any visible control or figure in the dashboard, Teams, People,
+  Diagnostics, About, the team editor or the outage state has no tooltip.
+- AGENTS.md: the tooltip rule and the decision to stay on Python 3.14.
+
 ## 0.4.2 (2026-10-15): reviewable alerts, one diagnostics entry, faster loads, bug fixes
 
 - **Stalled and overdue chips open the affected items**: a click on a card's chip filters its

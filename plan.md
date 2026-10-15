@@ -198,6 +198,8 @@ Requested 2026-10-15. Branch: `feature/clickable-alerts`.
 
 # Plan — v0.4.3: tooltips everywhere
 
+**Status: done, released as v0.4.3 on 2026-10-15.**
+
 Requested 2026-10-15: every element should explain itself on hover, so users can find out what
 something means without documentation. Branch: `feature/tooltips`.
 
