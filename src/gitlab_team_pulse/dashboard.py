@@ -21,7 +21,6 @@ from gitlab_team_pulse.models import (
     ActivityEventRecord,
     ContributionDay,
     ErrorRecord,
-    Milestone,
     Project,
     SyncState,
     TimelogRecord,
@@ -29,14 +28,19 @@ from gitlab_team_pulse.models import (
     WorkItemAssignee,
     WorkItemRecord,
 )
-from gitlab_team_pulse.sync import RECENT_EVENTS, RuntimeState, contribution_grid_start
+from gitlab_team_pulse.sync import (
+    HISTORY_CATEGORIES,
+    RECENT_EVENTS,
+    RuntimeState,
+    contribution_grid_start,
+)
 
 CATEGORIES = ("push", "comment", "issue", "merge_request", "other")
 USER_DATASETS = ("work", "activity", "timelogs")
 # Datasets whose errors map to their own per-user state; the calendar has its own pill, so it
 # is not part of the combined per-user freshness above.
-ERROR_DATASETS = (*USER_DATASETS, "contributions")
-OPEN_STATES = {"opened", "open", "locked"}
+ERROR_DATASETS = (*USER_DATASETS, *HISTORY_CATEGORIES)
+OPEN_STATES = store.OPEN_STATES
 ACTIVITY_PREVIEW = 5
 # detailed_merge_status values that mean "this cannot be merged as it is" (GitLab Free).
 MERGE_PROBLEMS = {
@@ -404,34 +408,12 @@ class DashboardReader:
     def milestones(self, users: list[User]) -> list[dict[str, Any]]:
         """Active milestones of monitored people's open items, soonest due first."""
         ids = [u.id for u in users]
-        if not ids:
-            return []
-        rows = self.session.execute(
-            select(WorkItemRecord.milestone_id, WorkItemAssignee.user_id, WorkItemRecord.id)
-            .join(WorkItemAssignee, WorkItemAssignee.work_item_id == WorkItemRecord.id)
-            .where(
-                WorkItemAssignee.user_id.in_(ids),
-                WorkItemAssignee.relation == "assignee",
-                WorkItemRecord.milestone_id.is_not(None),
-                WorkItemRecord.state.in_(OPEN_STATES),
-            )
-        ).all()
         mine: dict[int, set[int]] = defaultdict(set)
         people: dict[int, set[int]] = defaultdict(set)
-        for milestone_id, user_id, item_id in rows:
-            if milestone_id is None:  # pragma: no cover - excluded by the query
-                continue
+        for milestone_id, user_id, item_id in store.milestone_work(self.session, ids):
             mine[milestone_id].add(item_id)
             people[milestone_id].add(user_id)
-        if not mine:
-            return []
-        found = list(
-            self.session.scalars(
-                select(Milestone).where(Milestone.id.in_(mine), Milestone.state == "active")
-            )
-        )
-        found.sort(key=lambda m: (m.due_date is None, m.due_date or date.max, m.title))
-        found = found[: self.settings.milestones_max]
+        found = store.relevant_milestones(self.session, ids, self.settings.milestones_max)
         projects = self._projects({m.project_id for m in found if m.project_id is not None})
         names = {u.id: u.name for u in users}
         today = self.today()

@@ -12,13 +12,13 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import Engine
+from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from gitlab_team_pulse import __version__, dashboard, db, store, teams
 from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.logging_setup import configure_logging, get_logger
-from gitlab_team_pulse.models import Team, User
+from gitlab_team_pulse.models import Project, Team, User
 from gitlab_team_pulse.scheduler import Scheduler
 from gitlab_team_pulse.sync import ClientFactory, SyncService, default_client_factory
 
@@ -322,6 +322,17 @@ def api_router() -> APIRouter:
             context.scheduler.request_user_sync(user_id)  # load the new member's history now
         log.info("team=%d saved with %d members", saved_id, len(members))
         return payload
+
+    @router.get("/projects")
+    def projects(request: Request) -> dict[str, Any]:
+        """Known project paths and their namespaces: suggestions for a team's scope."""
+        context = ctx(request)
+        with context.session_factory() as session:
+            paths = sorted(session.scalars(select(Project.path_with_namespace)))
+        namespaces = sorted(
+            {"/".join(p.split("/")[:i]) for p in paths for i in range(1, p.count("/") + 1)}
+        )
+        return {"projects": paths, "namespaces": namespaces}
 
     @router.get("/teams")
     def list_teams(request: Request) -> dict[str, Any]:

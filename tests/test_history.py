@@ -19,6 +19,7 @@ from gitlab_team_pulse.models import (
     SyncState,
     TimelogDaily,
     WorkItemAssignee,
+    WorkItemRecord,
 )
 from gitlab_team_pulse.sync import SyncService
 
@@ -215,11 +216,32 @@ async def test_unreadable_milestones_keep_their_last_progress(
         after = {m.id: m.stats for m in session.scalars(select(Milestone)) if m.stats}
         assert after == before
         state = store.get_state(session, "milestones")
-        assert state.status == "error"
+        assert state.status == "ok"  # hourly cadence kept, not retried on every run
+        assert "404" in (state.last_error or "")
         errors = store.list_errors(session, include_resolved=False)
         assert [e.operation for e in errors] == ["milestones"]
+    assert service.milestones_due(clock.advance(minutes=10)) is False
+    assert service.milestones_due(clock.advance(hours=1)) is True
     service.settings = service.settings.model_copy(update={"milestones_max": 0})
     assert service.milestones_due(clock.advance(hours=2)) is False
+
+
+async def test_milestone_progress_follows_what_the_dashboard_shows(
+    service: SyncService, session_factory: sessionmaker[Session]
+) -> None:
+    await prepare(service, session_factory)
+    await service.sync_selected("scheduled")
+    with session_factory() as session:
+        shown = store.relevant_milestones(session, [ALEX], service.settings.milestones_max)
+        rows = session.execute(
+            select(WorkItemAssignee.relation, WorkItemRecord.milestone_id).join(
+                WorkItemRecord, WorkItemRecord.id == WorkItemAssignee.work_item_id
+            )
+        ).all()
+    assert shown
+    assert [m.id for m in service.milestones_to_refresh()] == [m.id for m in shown]
+    assigned = {mid for relation, mid in rows if relation == "assignee"}
+    assert {m.id for m in shown} <= assigned
 
 
 async def test_milestone_group_and_internal_errors_are_reported(

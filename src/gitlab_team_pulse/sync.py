@@ -30,7 +30,7 @@ from gitlab_team_pulse.gitlab.models import (
     history_metric,
 )
 from gitlab_team_pulse.logging_setup import get_logger
-from gitlab_team_pulse.models import Milestone, SyncRun, User, WorkItemAssignee, WorkItemRecord
+from gitlab_team_pulse.models import Milestone, SyncRun, User
 
 log = get_logger("sync")
 
@@ -41,7 +41,7 @@ CONTRIBUTION_WEEKS = 53
 HISTORY_REVISION = "h1"
 # Late or edited time entries are picked up by re-reading this many days on every refresh.
 TIMELOG_RESWEEP_DAYS = 31
-HISTORY_CATEGORIES = ("contributions", "timelog_history", "outcomes")
+HISTORY_CATEGORIES = store.HISTORY_CATEGORIES
 TOO_MANY_TRACKED = (
     "More team members than TEAMPULSE_MAX_TRACKED_USERS: the history of {count} team "
     "members is not refreshed"
@@ -776,25 +776,10 @@ class SyncService:
         )
 
     def milestones_to_refresh(self) -> list[Milestone]:
-        """Active milestones of open work of selected users, soonest due first."""
+        """The milestones the dashboard shows (same rule, same cap)."""
         with self.session_factory() as session:
-            selected = select(User.id).where(User.selected.is_(True))
-            ids = select(WorkItemRecord.milestone_id).where(
-                WorkItemRecord.milestone_id.is_not(None),
-                WorkItemRecord.state.in_(("opened", "locked")),
-                WorkItemRecord.id.in_(
-                    select(WorkItemAssignee.work_item_id).where(
-                        WorkItemAssignee.user_id.in_(selected)
-                    )
-                ),
-            )
-            found = list(
-                session.scalars(
-                    select(Milestone).where(Milestone.id.in_(ids), Milestone.state == "active")
-                )
-            )
-        found.sort(key=lambda m: (m.due_date is None, m.due_date or date.max, m.title))
-        return found[: self.settings.milestones_max]
+            selected = [u.id for u in store.selected_users(session)]
+            return store.relevant_milestones(session, selected, self.settings.milestones_max)
 
     async def sync_milestones(self, client: GitLabClient, run_id: str) -> bool:
         """Progress of the relevant milestones, computed from their issues (no Premium API).
@@ -825,9 +810,12 @@ class SyncService:
                 )
             state = store.get_state(session, "milestones")
             store.mark_attempt(state, now, run_id)
+            # Per-milestone problems are diagnostics; the category itself keeps its hourly
+            # cadence, so one unreadable milestone does not refetch all of them every run.
+            store.mark_success(state, now)
             if failures:
                 message = "; ".join(failures)
-                store.mark_failure(state, message)
+                state.last_error = message[: store.MAX_MESSAGE]
                 store.record_error(
                     session,
                     subsystem="sync",
@@ -837,7 +825,6 @@ class SyncService:
                     now=now,
                 )
             else:
-                store.mark_success(state, now)
                 store.resolve_errors(session, subsystem="sync", operation="milestones", now=now)
             store.bump_data_version(session)
             session.commit()

@@ -44,6 +44,8 @@ from gitlab_team_pulse.models import (
 DATA_VERSION = "data_version"
 USERS_VERSION = "users_version"
 TEAMS_VERSION = "teams_version"
+# Per-user history categories, refreshed hourly for selected users and team members.
+HISTORY_CATEGORIES = ("contributions", "timelog_history", "outcomes")
 MAX_MESSAGE = 2000
 
 
@@ -528,6 +530,42 @@ def upsert_milestones(session: Session, refs: list[MilestoneRef], now: datetime)
         record.due_date = ref.due_date
         record.web_url = ref.web_url
         record.seen_at = now
+
+
+OPEN_STATES = frozenset({"opened", "open", "locked"})
+
+
+def milestone_work(session: Session, user_ids: list[int]) -> list[tuple[int, int, int]]:
+    """(milestone ID, user ID, work item ID) of the users' open, assigned, milestoned items."""
+    if not user_ids:
+        return []
+    rows = session.execute(
+        select(WorkItemRecord.milestone_id, WorkItemAssignee.user_id, WorkItemRecord.id)
+        .join(WorkItemAssignee, WorkItemAssignee.work_item_id == WorkItemRecord.id)
+        .where(
+            WorkItemAssignee.user_id.in_(user_ids),
+            WorkItemAssignee.relation == "assignee",
+            WorkItemRecord.milestone_id.is_not(None),
+            WorkItemRecord.state.in_(OPEN_STATES),
+        )
+    ).all()
+    return [(mid, uid, wid) for mid, uid, wid in rows if mid is not None]
+
+
+def relevant_milestones(session: Session, user_ids: list[int], limit: int) -> list[Milestone]:
+    """Active milestones of the users' open assigned work, soonest due first, at most ``limit``.
+
+    The single rule for both the hourly progress sync and the dashboard, so every milestone
+    that is shown is also one whose progress gets computed.
+    """
+    ids = {mid for mid, _, _ in milestone_work(session, user_ids)}
+    if not ids:
+        return []
+    found = list(
+        session.scalars(select(Milestone).where(Milestone.id.in_(ids), Milestone.state == "active"))
+    )
+    found.sort(key=lambda m: (m.due_date is None, m.due_date or date.max, m.title))
+    return found[:limit]
 
 
 def milestone_stats(issues: list[WorkItem], today: date) -> dict[str, object]:

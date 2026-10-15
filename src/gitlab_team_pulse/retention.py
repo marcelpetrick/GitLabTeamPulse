@@ -43,8 +43,7 @@ from gitlab_team_pulse.models import (
 RECENT_EVENTS_KEPT = 12
 VACUUM_FREE_PAGES = 256
 DASHBOARD_CATEGORIES = ("work", "activity", "timelogs")
-HISTORY_CATEGORIES = ("contributions", "timelog_history", "outcomes")
-USER_CATEGORIES = (*DASHBOARD_CATEGORIES, *HISTORY_CATEGORIES)
+USER_CATEGORIES = (*DASHBOARD_CATEGORIES, *store.HISTORY_CATEGORIES)
 CONTRIBUTION_DAYS_KEPT = 7 * 54  # the 53-week grid plus a week of slack
 HISTORY_TABLES = (
     (ContributionDay, "contribution_days"),
