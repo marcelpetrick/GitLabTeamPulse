@@ -10,6 +10,8 @@ Rules (VISION section 18):
 * Team members who are not selected keep their history (daily aggregates and outcomes) while
   their short-lived dashboard cache expires; leaving every team purges the history as well.
 * History aggregates never outlive the 53-week calendar window.
+* Open diagnostics of people who are neither selected nor in a team are resolved: no sync
+  will ever clear them otherwise.
 * Selection state is never touched; resolved diagnostics and old runs expire.
 """
 
@@ -18,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from sqlalchemy import Engine, delete, exists, func, or_, select, text
+from sqlalchemy import Engine, delete, exists, func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from gitlab_team_pulse import store
@@ -66,6 +68,7 @@ class CleanupStats:
     projects: int = 0
     runs: int = 0
     errors: int = 0
+    errors_resolved: int = 0
     states: int = 0
     kept_last_known_good: list[str] = field(default_factory=list)
 
@@ -220,6 +223,22 @@ def cleanup(session: Session, settings: Settings, now: datetime) -> CleanupStats
         )
     )
     stats.runs += int(result.rowcount)  # type: ignore[attr-defined]
+
+    # A problem of someone who is no longer selected or in a team can never be resolved by a
+    # successful sync again (they are not synced any more): close it instead of showing it forever.
+    _count(
+        stats,
+        "errors_resolved",
+        session.execute(
+            update(ErrorRecord)
+            .where(
+                ErrorRecord.resolved_at.is_(None),
+                ErrorRecord.user_id.is_not(None),
+                ErrorRecord.user_id.not_in(selected | in_teams),
+            )
+            .values(resolved_at=now)
+        ),
+    )
 
     error_cutoff = now - timedelta(days=settings.error_retention_days)
     result = session.execute(

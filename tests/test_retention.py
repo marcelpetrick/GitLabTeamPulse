@@ -189,3 +189,33 @@ def test_cleanup_failure_is_recorded(
     with session_factory() as session:
         errors = store.list_errors(session)
         assert errors[0].subsystem == "cleanup"
+
+
+def test_open_errors_of_people_no_longer_tracked_are_resolved(
+    session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    from gitlab_team_pulse.config import Settings
+    from gitlab_team_pulse.gitlab.models import GitLabUser
+
+    now = clock.now
+    with session_factory() as session:
+        store.upsert_users(
+            session,
+            [GitLabUser(id=uid, username=f"u{uid}", name=f"U{uid}") for uid in (1, 2, 3)],
+            now,
+        )
+        store.set_selected(session, 1, True, now)
+        store.save_team(session, None, name="T", description="", member_ids=[2], scopes=[], now=now)
+        for uid in (1, 2, 3):
+            store.record_error(
+                session, subsystem="sync", operation="activity", message="404", user_id=uid, now=now
+            )
+        store.record_error(
+            session, subsystem="directory", operation="list_users", message="x", now=now
+        )
+        session.commit()
+        stats = retention.cleanup(session, Settings(_env_file=None), now)  # type: ignore[call-arg]
+        session.commit()
+        still_open = {e.user_id for e in store.list_errors(session, include_resolved=False)}
+    assert still_open == {1, 2, None}  # selected, team member and global problems stay
+    assert stats.errors_resolved == 1
