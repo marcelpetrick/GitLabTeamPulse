@@ -11,7 +11,7 @@
   <script type="module" src="/static/app.js"></script>
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to content</a>
+  <a class="skip-link" href="#main" title="Jump past the top bar to the page content">Skip to content</a>
   <header class="topbar">
     <div class="brand">
       <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
@@ -21,13 +21,16 @@
       <span class="brand-name">Team Pulse</span>
     </div>
     <nav class="tabs" aria-label="Main">
-      <button type="button" class="tab" data-view="dashboard" id="tab-dashboard">
+      <button type="button" class="tab" data-view="dashboard" id="tab-dashboard"
+              title="Dashboard: what the monitored people work on, what needs attention and milestone progress">
         Dashboard
       </button>
-      <button type="button" class="tab" data-view="teams" id="tab-teams">
+      <button type="button" class="tab" data-view="teams" id="tab-teams"
+              title="Teams: named groups of people and their reports over weeks, months and quarters (the number is how many teams exist)">
         Teams <span class="tab-count" id="tab-teams-count" hidden></span>
       </button>
-      <button type="button" class="tab" data-view="people" id="tab-people">
+      <button type="button" class="tab" data-view="people" id="tab-people"
+              title="People: choose whom the dashboard monitors (the number is how many are selected; the choice is shared)">
         People <span class="tab-count" id="tab-people-count" hidden></span>
       </button>
     </nav>

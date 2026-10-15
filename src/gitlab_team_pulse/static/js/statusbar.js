@@ -16,7 +16,12 @@ export function renderStatusbar(app) {
   if (!status) return;
   const crawler = status.crawler.state;
   const selected = status.selected;
-  const crawlerItem = h("span", { class: `status-item ${crawler === "error" ? "err" : crawler}`, "data-crawler": crawler });
+  const crawlerTitles = {
+    refreshing: "Synchronization with GitLab is running; the shown data stays visible meanwhile",
+    error: "The last synchronization failed; cached data is shown. Open Diagnostics for details",
+    idle: "No synchronization is running; the next one starts on schedule or with Refresh now",
+  };
+  const crawlerItem = h("span", { class: `status-item ${crawler === "error" ? "err" : crawler}`, "data-crawler": crawler, title: crawlerTitles[crawler] || "Synchronization state" });
   if (crawler === "refreshing") crawlerItem.append(h("span", { class: "spinner", "aria-hidden": "true" }), h("strong", {}, "Refreshing…"));
   else if (crawler === "error") crawlerItem.append(icon("warning"), h("strong", {}, "Error"));
   else crawlerItem.append(icon("check"), h("strong", {}, "Idle"));
@@ -47,6 +52,6 @@ export function renderStatusbar(app) {
   right.replaceChildren(
     h("span", { class: "status-item", title: `Directory: ${exactTime(status.directory.last_success_at)}` }, "Directory ", rel(status.directory.last_success_at)),
     problems,
-    h("span", { class: "status-item faint" }, `v${status.version}`),
+    h("span", { class: "status-item faint", title: "Team Pulse version (details in About)" }, `v${status.version}`),
   );
 }

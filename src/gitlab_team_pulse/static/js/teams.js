@@ -16,6 +16,33 @@ const KPIS = [
   ["review_comments", "Review comments", (t) => String(t.review_comments), (t) => t.review_comments],
 ];
 const collator = new Intl.Collator("en", { sensitivity: "base", numeric: true });
+const KPI_TITLES = {
+  hours: "Time the team members logged in GitLab in this period; the change compares with the same number of days of the previous period",
+  mrs_merged: "Merged merge requests authored by team members, each counted once",
+  issues_closed: "Closed issues currently assigned to team members, each counted once",
+  mrs_opened: "Merge requests opened by team members",
+  approvals: "Merge request approvals given by team members",
+  review_comments: "Comments by team members on merge requests",
+  cycle: "Time from opening to merging of the merged MRs: the median, and the middle half of all MRs",
+  estimate: "Time spent on closed issues compared with their estimate (only issues that had one); over 100% means more time than estimated",
+};
+const SHARE_TITLES = {
+  Project: "GitLab project the time or work belongs to",
+  Time: "Time logged by team members on this project in the period",
+  Share: "Part of all logged team time in the period",
+  "MRs merged": "Merged MRs authored by team members in this project",
+  "Issues closed": "Closed issues of team members in this project",
+};
+const PEOPLE_TITLES = {
+  Person: "Team member (alphabetical; this is not a ranking)",
+  Time: "Time this person logged in GitLab in the period",
+  "Days with time": "Days with any time entry / days in the period so far; low numbers usually mean time is not logged in GitLab",
+  "MRs merged": "Merged MRs authored by this person",
+  "Issues closed": "Closed issues currently assigned to this person",
+  Approvals: "Merge request approvals given",
+  "Review comments": "Comments on merge requests",
+};
+const PERIOD_TITLES = { week: "Calendar week, Monday to Sunday", month: "Calendar month", quarter: "Calendar quarter" };
 
 function hoursText(hours) {
   if (hours < 24) return `${Math.round(hours * 10) / 10}h`;
@@ -64,10 +91,10 @@ export class TeamsView {
       h("div", {},
         h("h1", { id: "teams-title" }, "Teams"),
         h("div", { class: "subtitle" },
-          h("span", { class: "badge info" }, icon("globe"), "Shared"),
+          h("span", { class: "badge info", title: "Everyone who opens this dashboard sees and can change the same teams" }, icon("globe"), "Shared"),
           readonly ? "Teams are read-only on this server." : "Teams are stored on this server and shared with everyone using the dashboard.")),
       h("div", { class: "spacer" }),
-      readonly ? null : h("button", { type: "button", class: "button primary", id: "new-team", onclick: () => this.editor.open(null) }, icon("users"), "New team"));
+      readonly ? null : h("button", { type: "button", class: "button primary", id: "new-team", title: "Create a named group of people with an optional project scope", onclick: () => this.editor.open(null) }, icon("users"), "New team"));
     if (!data) {
       this.root.replaceChildren(head, h("div", { class: "empty" }, h("p", {}, "Loading teams…")));
       return;
@@ -76,12 +103,13 @@ export class TeamsView {
       this.root.replaceChildren(head, h("div", { class: "empty" },
         h("h2", {}, "No teams yet"),
         h("p", {}, "Group people — for example everyone working on a product — and see how the team is doing for its projects over weeks, months and quarters."),
-        readonly ? null : h("button", { type: "button", class: "button primary", onclick: () => this.editor.open(null) }, icon("users"), "Create a team")));
+        readonly ? null : h("button", { type: "button", class: "button primary", title: "Create a named group of people with an optional project scope", onclick: () => this.editor.open(null) }, icon("users"), "Create a team")));
       return;
     }
     const picker = h("div", { class: "chip-group team-picker", role: "group", "aria-label": "Team" },
       this.teams.map((team) => h("button", {
         type: "button", "aria-pressed": String(team.id === this.teamId), dataset: { teamId: team.id },
+        title: `Show the report of team ${team.name}`,
         onclick: () => { this.teamId = team.id; this.report = null; this.render(); this.loadReport(); },
       }, team.name)));
     this.body = h("div", { class: "team-body" });
@@ -106,12 +134,12 @@ export class TeamsView {
           members,
           h("span", { class: "muted" }, plural(team.members.length, "person", "people")),
           team.scopes.length
-            ? h("span", { class: "scopes" }, h("span", { class: "muted" }, "Scope:"), team.scopes.map((scope) => h("span", { class: "label-chip" }, scope)))
+            ? h("span", { class: "scopes" }, h("span", { class: "muted" }, "Scope:"), team.scopes.map((scope) => h("span", { class: "label-chip", title: "Only work in this project or namespace (and below) counts in the report" }, scope)))
             : h("span", { class: "muted" }, "Scope: all projects"))),
       h("div", { class: "toolbar" },
-        h("button", { type: "button", class: "button", onclick: () => this.apply(team) }, icon("arrow"), "Show on dashboard"),
-        readonly ? null : h("button", { type: "button", class: "button", onclick: () => this.editor.open(team) }, "Edit"),
-        readonly ? null : h("button", { type: "button", class: "button ghost danger", onclick: () => this.remove(team) }, "Delete")));
+        h("button", { type: "button", class: "button", title: "Make the team's members the monitored people on the dashboard (shared with everyone)", onclick: () => this.apply(team) }, icon("arrow"), "Show on dashboard"),
+        readonly ? null : h("button", { type: "button", class: "button", title: "Change name, members and project scope", onclick: () => this.editor.open(team) }, "Edit"),
+        readonly ? null : h("button", { type: "button", class: "button ghost danger", title: "Delete the team; its members stay in GitLab and on the dashboard", onclick: () => this.remove(team) }, "Delete")));
   }
 
   async apply(team) {
@@ -179,11 +207,12 @@ export class TeamsView {
       h("div", { class: "chip-group", role: "group", "aria-label": "Report period" },
         PERIODS.map(([key, label]) => h("button", {
           type: "button", "aria-pressed": String(this.period === key), dataset: { period: key },
+          title: PERIOD_TITLES[key],
           onclick: () => this.setPeriod(key, 0),
         }, label))),
       h("div", { class: "period-nav" },
         h("button", { type: "button", class: "icon-button", title: "Previous period", "aria-label": "Previous period", onclick: () => this.setPeriod(this.period, this.offset + 1) }, "◀"),
-        h("strong", { class: "period-label" }, report ? report.period.label : "…"),
+        h("strong", { class: "period-label", title: "The period shown; ◀ and ▶ move backwards and forwards" }, report ? report.period.label : "…"),
         h("button", { type: "button", class: "icon-button", title: "Next period", "aria-label": "Next period", disabled: this.offset === 0, onclick: () => this.setPeriod(this.period, this.offset - 1) }, "▶")),
       report ? h("span", { class: "muted period-note" }, this.periodNote(report)) : null,
       h("div", { class: "spacer" }),
@@ -223,18 +252,18 @@ export class TeamsView {
   kpis(report) {
     const t = report.totals;
     const prev = report.previous;
-    const tiles = KPIS.map(([key, label, show, raw]) => h("div", { class: "kpi", dataset: { kpi: key } },
+    const tiles = KPIS.map(([key, label, show, raw]) => h("div", { class: "kpi", dataset: { kpi: key }, title: KPI_TITLES[key] },
       h("span", { class: "kpi-label" }, label),
       h("span", { class: "kpi-value" }, show(t)),
       h("span", { class: "kpi-delta" }, delta(raw(t), raw(prev)), h("span", { class: "muted" }, ` vs ${show(prev)}`))));
     const cycle = t.cycle_time_hours;
-    tiles.push(h("div", { class: "kpi", dataset: { kpi: "cycle" } },
+    tiles.push(h("div", { class: "kpi", dataset: { kpi: "cycle" }, title: KPI_TITLES.cycle },
       h("span", { class: "kpi-label" }, "MR cycle time"),
       h("span", { class: "kpi-value" }, cycle ? hoursText(cycle.median) : "—"),
       h("span", { class: "kpi-delta muted" }, cycle ? `median of ${cycle.count} · middle half ${hoursText(cycle.p25)}–${hoursText(cycle.p75)}` : "no merged MRs")));
     const est = t.estimate;
     const ratio = est.estimate_seconds ? Math.round((est.spent_seconds / est.estimate_seconds) * 100) : null;
-    tiles.push(h("div", { class: "kpi", dataset: { kpi: "estimate" } },
+    tiles.push(h("div", { class: "kpi", dataset: { kpi: "estimate" }, title: KPI_TITLES.estimate },
       h("span", { class: "kpi-label" }, "Spent vs estimate"),
       h("span", { class: `kpi-value${ratio !== null && ratio > 120 ? " warn-text" : ""}` }, ratio === null ? "—" : `${ratio}%`),
       h("span", { class: "kpi-delta muted" }, est.issues ? `${est.with_estimate} of ${plural(est.issues, "closed issue")} estimated` : "no closed issues")));
@@ -249,7 +278,7 @@ export class TeamsView {
       return panel;
     }
     panel.append(h("table", { class: "share-table" },
-      h("thead", {}, h("tr", {}, ["Project", "Time", "Share", "MRs merged", "Issues closed"].map((c, i) => h("th", { scope: "col", class: i ? "num" : null }, c)))),
+      h("thead", {}, h("tr", {}, ["Project", "Time", "Share", "MRs merged", "Issues closed"].map((c, i) => h("th", { scope: "col", class: i ? "num" : null, title: SHARE_TITLES[c] }, c)))),
       h("tbody", {}, report.projects.map((project) => {
         const bar = h("div", { class: "share-bar" });
         bar.style.width = `${Math.max(project.share * 100, project.seconds ? 1.5 : 0)}%`;
@@ -280,7 +309,9 @@ export class TeamsView {
     panel.append(h("ul", { class: "spread-list" }, report.spread.map((row) => h("li", { class: row.single ? "is-single" : null },
       h("div", { class: "spread-path" }, row.path),
       h("div", { class: "spread-people" },
-        row.single ? h("span", { class: "badge warn" }, icon("warning"), "1 person") : h("span", { class: "badge outline" }, `${row.count} people`),
+        row.single
+          ? h("span", { class: "badge warn", title: "Only one team member worked on merge requests here in 12 weeks: the knowledge sits with one person" }, icon("warning"), "1 person")
+          : h("span", { class: "badge outline", title: "Team members who merged, approved or reviewed MRs here in the last 12 weeks" }, `${row.count} people`),
         h("span", { class: "muted" }, row.people.join(", ")))))));
     return panel;
   }
@@ -296,7 +327,7 @@ export class TeamsView {
         h("div", {}, h("h3", { id: "people-breakdown-title" }, "People · alphabetical, not ranked"),
           h("div", { class: "muted small-note" }, "Facts per person to check the totals; an empty time cell usually means no time is logged in GitLab"))),
       h("div", { class: "table-scroll" }, h("table", { class: "people-table" },
-        h("thead", {}, h("tr", {}, ["Person", "Time", "Days with time", "MRs merged", "Issues closed", "Approvals", "Review comments"].map((c, i) => h("th", { scope: "col", class: i ? "num" : null }, c)))),
+        h("thead", {}, h("tr", {}, ["Person", "Time", "Days with time", "MRs merged", "Issues closed", "Approvals", "Review comments"].map((c, i) => h("th", { scope: "col", class: i ? "num" : null, title: PEOPLE_TITLES[c] }, c)))),
         h("tbody", {}, report.people.map((person) => h("tr", {},
           h("td", {}, person.name, h("span", { class: "muted" }, ` @${person.username}`)),
           h("td", { class: "num" }, person.seconds ? formatDuration(person.seconds) : "—"),
@@ -309,9 +340,9 @@ export class TeamsView {
 
   footer(report) {
     return h("div", { class: "report-footer" },
-      h("button", { type: "button", class: "button", id: "copy-digest", onclick: () => this.copyDigest() }, "Copy last week as Markdown"),
+      h("button", { type: "button", class: "button", id: "copy-digest", title: "Copy a short report of the last completed calendar week (totals, time per project, merged MRs, closed issues) to paste elsewhere", onclick: () => this.copyDigest() }, "Copy last week as Markdown"),
       h("details", { class: "counting" },
-        h("summary", {}, "How these numbers are counted"),
+        h("summary", { title: "Exactly which GitLab data each number is built from" }, "How these numbers are counted"),
         h("dl", {}, report.counting.map((row) => [h("dt", {}, row.metric), h("dd", {}, row.rule)]))));
   }
 
@@ -380,16 +411,18 @@ class TeamEditor {
   }
 
   build() {
-    this.name = h("input", { class: "input", id: "team-name", required: true, maxlength: 120, value: this.team?.name || "", autocomplete: "off" });
-    this.description = h("textarea", { class: "input textarea", id: "team-description", rows: 2, maxlength: 2000 }, this.team?.description || "");
+    this.name = h("input", { class: "input", id: "team-name", required: true, maxlength: 120, value: this.team?.name || "", autocomplete: "off", title: "Unique name of the team" });
+    this.description = h("textarea", { class: "input textarea", id: "team-description", rows: 2, maxlength: 2000, title: "Optional: what the team works on" }, this.team?.description || "");
     this.memberList = h("div", { class: "member-picker", role: "group", "aria-label": "Team members" });
-    this.memberCount = h("span", { class: "badge accent" });
+    this.memberCount = h("span", { class: "badge accent", title: "Members chosen so far" });
     this.memberFilter = h("input", {
       class: "input", type: "search", placeholder: "Filter people…", "aria-label": "Filter people", autocomplete: "off",
+      title: "Type part of a name or username to narrow the list",
       oninput: (event) => { this.filter = event.target.value; this.renderMembers(); },
     });
     this.scopeInput = h("input", {
       class: "input", id: "team-scope", list: "team-scope-options", placeholder: "group/project or group", autocomplete: "off",
+      title: "A project path or a namespace; a namespace includes all projects below it. Press Enter or Add",
       onkeydown: (event) => { if (event.key === "Enter") { event.preventDefault(); this.addScope(); } },
     });
     this.scopeOptions = h("datalist", { id: "team-scope-options" });
@@ -405,13 +438,13 @@ class TeamEditor {
     this.memberFilter, this.memberList,
     h("div", { class: "form-row" }, h("label", { for: "team-scope", class: "form-label" }, "Project scope"),
       h("span", { class: "muted" }, "empty = all projects")),
-    h("div", { class: "scope-add" }, this.scopeInput, h("button", { type: "button", class: "button small", onclick: () => this.addScope() }, "Add")),
+    h("div", { class: "scope-add" }, this.scopeInput, h("button", { type: "button", class: "button small", title: "Add the typed project or namespace to the scope", onclick: () => this.addScope() }, "Add")),
     this.scopeOptions, this.scopeChips,
     h("p", { class: "muted small-note" }, "A namespace includes all projects below it. The report only counts work in the scope."),
     this.errorBox,
     h("div", { class: "form-actions" },
-      h("button", { type: "button", class: "button", onclick: () => this.close() }, "Cancel"),
-      h("button", { type: "submit", class: "button primary", id: "save-team" }, this.team ? "Save team" : "Create team")));
+      h("button", { type: "button", class: "button", title: "Close without saving", onclick: () => this.close() }, "Cancel"),
+      h("button", { type: "submit", class: "button primary", id: "save-team", title: "Save the team; new members' history is loaded in the background" }, this.team ? "Save team" : "Create team")));
     this.root.replaceChildren(h("div", { class: "drawer-panel" },
       h("div", { class: "drawer-head" },
         h("h2", { id: "team-editor-title" }, this.team ? `Edit ${this.team.name}` : "New team"),
@@ -443,7 +476,7 @@ class TeamEditor {
           this.memberCount.textContent = `${this.members.size} selected`;
         },
       });
-      this.memberList.append(h("label", { class: "member-option", for: `member-${user.id}` },
+      this.memberList.append(h("label", { class: "member-option", for: `member-${user.id}`, title: `Include ${user.name} (@${user.username}) in the team` },
         box, avatar(user), h("span", {}, user.name, h("span", { class: "muted" }, ` @${user.username}`))));
     }
     if (users.length === 0) this.memberList.append(h("p", { class: "muted" }, "No active people match."));
@@ -462,8 +495,8 @@ class TeamEditor {
   }
 
   renderScopes() {
-    this.scopeChips.replaceChildren(...[...this.scopes].sort().map((scope) => h("span", { class: "scope-chip" }, scope,
-      h("button", { type: "button", class: "chip-remove", "aria-label": `Remove ${scope}`, onclick: () => { this.scopes.delete(scope); this.renderScopes(); } }, "×"))));
+    this.scopeChips.replaceChildren(...[...this.scopes].sort().map((scope) => h("span", { class: "scope-chip", title: `Work in ${scope} (and below) counts in the report` }, scope,
+      h("button", { type: "button", class: "chip-remove", "aria-label": `Remove ${scope}`, title: `Remove ${scope} from the scope`, onclick: () => { this.scopes.delete(scope); this.renderScopes(); } }, "×"))));
   }
 
   showError(message) {

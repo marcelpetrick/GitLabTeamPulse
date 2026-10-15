@@ -41,6 +41,15 @@ function reasonText(reason) {
 }
 
 const SEVERITY_BADGE = { error: "err", warning: "warn", info: "info" };
+const REASON_TITLES = {
+  stalled: "Open and assigned, but nothing changed for a week or more: probably blocked or forgotten",
+  overdue: "The due date has passed and the item is still open",
+  due_soon: "Due within the next days",
+  review: "A monitored person is asked to review this merge request (age since it was opened; idle = days without any change)",
+  cannot_merge: "GitLab reports that this merge request cannot be merged as it is",
+  no_reviewer: "Nobody is asked to review this merge request",
+  unmonitored_reviewer: "The reviewers are colleagues who are not monitored on this dashboard",
+};
 
 export class AttentionPanel {
   constructor() {
@@ -82,6 +91,7 @@ export class AttentionPanel {
       if (chosen.length > PREVIEW_ROWS) {
         more.append(h("button", {
           type: "button", class: "button ghost small", "aria-expanded": String(this.expanded),
+          title: "Show every item of this filter or only the most urgent ones",
           onclick: () => { this.expanded = !this.expanded; renderList(); },
         }, this.expanded ? "Show fewer" : `Show all ${chosen.length}`));
       }
@@ -109,17 +119,17 @@ export class AttentionPanel {
     const typeText = item.kind === "merge_request" ? "MR" : item.kind === "epic" ? "Epic" : "Issue";
     const people = item.people.map((p) => `${p.name}${p.relations.includes("reviewer") && !p.relations.includes("assignee") ? " (reviewer)" : ""}`);
     return h("li", { class: `attention-row sev-${item.severity}`, dataset: { reference: item.reference } },
-      h("span", { class: `badge ${item.kind === "merge_request" ? "accent" : "outline"}` }, typeText),
+      h("span", { class: `badge ${item.kind === "merge_request" ? "accent" : "outline"}`, title: item.kind === "merge_request" ? "Merge request" : item.kind === "epic" ? "Epic" : "Issue" }, typeText),
       h("div", { class: "attention-main" },
         h("div", { class: "title" }, safeLink(item.web_url, item.title)),
         h("div", { class: "meta" },
           h("span", { class: "ref" }, item.reference),
-          item.draft ? h("span", { class: "badge warn" }, "Draft") : null,
+          item.draft ? h("span", { class: "badge warn", title: "Draft: not ready to be merged yet" }, "Draft") : null,
           h("span", { class: "faint" }, "·"),
           h("span", {}, people.join(", ")),
           item.milestone ? [h("span", { class: "faint" }, "·"), h("span", {}, item.milestone)] : null)),
       h("div", { class: "attention-reasons" },
-        item.reasons.map((reason) => h("span", { class: `badge ${SEVERITY_BADGE[reason.severity]}`, dataset: { reason: reason.code } },
+        item.reasons.map((reason) => h("span", { class: `badge ${SEVERITY_BADGE[reason.severity]}`, dataset: { reason: reason.code }, title: REASON_TITLES[reason.code] || reason.code },
           reason.severity === "error" ? icon("warning") : null, reasonText(reason)))),
       h("div", { class: "attention-updated muted" }, "updated ", rel(item.updated_at)));
   }
@@ -151,6 +161,7 @@ function burnup(stats, milestone) {
   }
   points.push([x(Math.min(now, t1)), y(count)]);
   return s("svg", { class: "burnup", viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": `${stats.closed} of ${total} issues closed` },
+    s("title", {}, `Burn-up: closed issues over time (green) against an even pace from start to due date (dashed); the vertical line is today. ${stats.closed} of ${total} closed.`),
     s("line", { x1: 0, y1: y(0), x2: width, y2: y(total), class: "burnup-ideal" }),
     now >= t0 && now <= t1 ? s("line", { x1: x(now), y1: 0, x2: x(now), y2: height, class: "burnup-today" }) : null,
     s("polyline", { points: points.map((p) => p.join(",")).join(" "), class: "burnup-line" }));
@@ -174,7 +185,7 @@ export class MilestonesPanel {
   render(milestones) {
     if (!milestones || milestones.length === 0) return null;
     const grid = h("div", { class: "milestone-grid" });
-    const toggle = h("button", { type: "button", class: "button ghost small" });
+    const toggle = h("button", { type: "button", class: "button ghost small", title: "Show all milestones or only the soonest due" });
     const draw = () => {
       const shown = this.expanded ? milestones : milestones.slice(0, MILESTONE_PREVIEW);
       grid.replaceChildren(...shown.map((m) => milestoneTile(m)));
@@ -200,9 +211,9 @@ function milestoneTile(m) {
     h("div", { class: "milestone-title" },
       h("strong", {}, safeLink(m.web_url, m.title)),
       m.project ? h("span", { class: "muted" }, m.project.path || m.project.name) : null),
-    h("div", { class: `milestone-due ${dueCls}` }, dueCls === "overdue" ? icon("warning") : icon("clock"), due));
+    h("div", { class: `milestone-due ${dueCls}`, title: "Due date of the milestone in GitLab" }, dueCls === "overdue" ? icon("warning") : icon("clock"), due));
   if (stats) {
-    const progress = h("div", { class: "progress", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": String(stats.total), "aria-valuenow": String(stats.closed) },
+    const progress = h("div", { class: "progress", role: "progressbar", "aria-valuemin": "0", "aria-valuemax": String(stats.total), "aria-valuenow": String(stats.closed), title: `${stats.closed} of ${stats.total} issues of the milestone are closed (all issues, not only the monitored people's)` },
       h("div", { class: "progress-fill" }));
     progress.firstChild.style.width = `${stats.total ? (stats.closed / stats.total) * 100 : 0}%`;
     const chart = burnup(stats, m);

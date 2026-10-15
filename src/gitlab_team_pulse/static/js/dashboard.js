@@ -70,9 +70,33 @@ function timeChip(item) {
     estimate ? `${formatDuration(spent)} / ${formatDuration(estimate)}` : `${formatDuration(spent)} / —`);
 }
 
+const STAT_TITLES = {
+  "work items": "Assigned issues and merge requests plus MRs to review: updated in the last 30 days, and every open one however old",
+  "actions · 7 days": "GitLab events of this person in the last 7 days: pushes, comments, issues, merge requests and more",
+  "logged · 7 days": "Time this person logged in GitLab time tracking in the last 7 days (never estimated)",
+};
+const WORK_FILTER_TITLES = {
+  all: "Every item in the list",
+  open: "Only open items",
+  done: "Only closed issues and closed or merged merge requests",
+  stalled: "Open items assigned to this person without any update for a week or more",
+  overdue: "Open items assigned to this person whose due date has passed",
+  unestimated: "Open issues without a time estimate in GitLab",
+};
+const WORK_COLUMN_TITLES = {
+  Type: "Issue, merge request, incident, task or epic; 'Reviewer' marks MRs this person reviews",
+  Title: "Title, reference and labels; the title opens the item in GitLab",
+  Project: "GitLab project (or group, for epics)",
+  State: "State in GitLab and the priority from a Prio:: label",
+  Milestone: "Milestone the item belongs to",
+  Time: "Time spent / time estimate from GitLab time tracking",
+  Due: "Due date; red when it has passed",
+  Updated: "Last change in GitLab; 'no update for N d' marks stalled work",
+};
+
 function labelChip(label) {
   const [scope, value] = label.includes("::") ? label.split("::", 2) : [null, label];
-  return h("span", { class: "label-chip" }, scope ? [h("span", { class: "scope" }, `${scope}::`), value] : label);
+  return h("span", { class: "label-chip", title: scope ? `GitLab scoped label ${scope}::${value}` : `GitLab label "${label}"` }, scope ? [h("span", { class: "scope" }, `${scope}::`), value] : label);
 }
 
 const emptyArt = () =>
@@ -103,6 +127,7 @@ export class DashboardView {
     const status = this.app.status;
     this.refreshButton = h("button", {
       type: "button", class: "button primary", id: "refresh-now", onclick: () => this.refresh(),
+      title: "Fetch fresh data for the monitored people from GitLab now; the current data stays visible meanwhile",
     });
     this.updateRefreshButton();
     const selected = status?.selected;
@@ -126,7 +151,7 @@ export class DashboardView {
       nodes.push(h("div", { class: "empty" }, emptyArt(),
         h("h2", {}, "Nobody is monitored yet"),
         h("p", {}, "Choose the GitLab accounts you want to follow. The selection is shared by everyone using this dashboard."),
-        h("button", { type: "button", class: "button primary", onclick: () => this.app.navigate("people") }, icon("users"), "Choose people")));
+        h("button", { type: "button", class: "button primary", title: "Open the People view to choose whom to monitor", onclick: () => this.app.navigate("people") }, icon("users"), "Choose people")));
     } else {
       const today = todayIso(data.timezone);
       if (data.attention) nodes.push(this.attention.render(data.attention, data.cards.length));
@@ -142,6 +167,7 @@ export class DashboardView {
     if (teams.length === 0) return null;
     return h("select", {
       class: "select", "aria-label": "Show a team on the dashboard", id: "apply-team",
+      title: "Replace the monitored people with the members of a team (shared with everyone)",
       onchange: async (event) => {
         const team = teams.find((t) => String(t.id) === event.target.value);
         event.target.value = "";
@@ -167,7 +193,7 @@ export class DashboardView {
       icon("warning"),
       h("div", { class: "banner-text" }, h("strong", {}, isError ? "Refresh problem. " : "Stale data. "), text,
         info.last_success_at ? h("span", {}, exactTime(info.last_success_at), " (", rel(info.last_success_at), ")") : "none yet"),
-      h("button", { type: "button", class: "button small", onclick: () => this.app.openDiagnostics() }, "View diagnostics"));
+      h("button", { type: "button", class: "button small", title: "Open Diagnostics: what failed and since when", onclick: () => this.app.openDiagnostics() }, "View diagnostics"));
   }
 
   updateRefreshButton() {
@@ -228,8 +254,8 @@ export class DashboardView {
         h("div", { class: "identity" },
           h("div", { class: "line" },
             h("h2", { id: `card-${user.id}` }, user.name),
-            user.account_type !== "human" ? h("span", { class: "badge accent" }, user.account_type) : null,
-            user.state !== "active" ? h("span", { class: "badge warn" }, user.state) : null),
+            user.account_type !== "human" ? h("span", { class: "badge accent", title: `GitLab account type: ${user.account_type} (not a person)` }, user.account_type) : null,
+            user.state !== "active" ? h("span", { class: "badge warn", title: `GitLab account state: ${user.state}` }, user.state) : null),
           h("div", { class: "line" },
             h("span", { class: "username" }, safeLink(user.web_url, `@${user.username}`)),
             freshnessPill(freshness, { small: true, label: `${user.name} data` }))),
@@ -258,7 +284,8 @@ export class DashboardView {
   }
 
   stat(value, label, extra = null, warn = false) {
-    return h("div", { class: `stat${warn ? " warn" : ""}`, title: warn ? "No time logged in GitLab during the last 7 days" : null },
+    const title = warn ? "No time logged in GitLab during the last 7 days" : STAT_TITLES[label] || label;
+    return h("div", { class: `stat${warn ? " warn" : ""}`, title },
       h("span", { class: "value" }, warn ? [icon("warning"), " ", String(value)] : String(value)),
       h("span", { class: "label" }, extra ? `${label} · ${extra}` : label));
   }
@@ -311,6 +338,7 @@ export class DashboardView {
     if (events.length > preview) {
       const toggle = h("button", {
         type: "button", class: "button ghost small", "aria-expanded": String(state.allActivity),
+        title: "Show or hide the older of the twelve latest actions",
         onclick: () => {
           state.allActivity = !state.allActivity;
           for (const node of list.querySelectorAll(".activity-extra")) node.hidden = !state.allActivity;
@@ -351,6 +379,7 @@ export class DashboardView {
             entry.summary ? h("div", { class: "muted" }, entry.summary) : null)))));
       const toggle = h("button", {
         type: "button", class: "button ghost small", "aria-expanded": String(state.entries),
+        title: "Show or hide every time entry of the last 7 days",
         onclick: () => {
           state.entries = !state.entries;
           table.hidden = !state.entries;
@@ -381,6 +410,7 @@ export class DashboardView {
       [["2d", "2D calendar"], ["3d", "3D skyline"]].map(([key, label]) =>
         h("button", {
           type: "button", "aria-pressed": String(state.calendar === key), dataset: { calendarView: key },
+          title: key === "2d" ? "Calendar grid like on GitLab profiles" : "3D skyline: drag to rotate, scroll to zoom",
           onclick: () => {
             state.calendar = key;
             for (const b of toggle.children) b.setAttribute("aria-pressed", String(b.dataset.calendarView === key));
@@ -410,6 +440,7 @@ export class DashboardView {
       [["all", "All"], ["open", "Open"], ["done", "Closed / merged"], ["stalled", "Stalled"], ["overdue", "Overdue"], ["unestimated", "No estimate"]].map(([key, label]) =>
         h("button", {
           type: "button", "aria-pressed": String(state.filter === key), dataset: { filter: key },
+          title: WORK_FILTER_TITLES[key],
           onclick: () => {
             state.filter = key;
             for (const b of filterGroup.children) b.setAttribute("aria-pressed", String(b.dataset.filter === key));
@@ -418,6 +449,7 @@ export class DashboardView {
         }, label)));
     const sortSelect = h("select", {
       class: "select", "aria-label": `Sort work of ${card.user.name}`, dataset: { role: "work-sort" },
+      title: "Order of the work items below",
       onchange: (e) => { state.sort = e.target.value; renderTable(); },
     }, Object.entries(WORK_SORTS).map(([key, [label]]) => h("option", { value: key, selected: key === state.sort }, label)));
     const heading = h("h3", { tabindex: "-1" });
@@ -436,22 +468,22 @@ export class DashboardView {
       }
       const shown = state.allWork ? items : items.slice(0, WORK_ROWS);
       body.append(h("div", { class: "table-scroll" }, h("table", { class: "work-table" },
-        h("thead", {}, h("tr", {}, ["Type", "Title", "Project", "State", "Milestone", "Time", "Due", "Updated"].map((c) => h("th", { scope: "col" }, c)))),
+        h("thead", {}, h("tr", {}, ["Type", "Title", "Project", "State", "Milestone", "Time", "Due", "Updated"].map((c) => h("th", { scope: "col", title: WORK_COLUMN_TITLES[c] }, c)))),
         h("tbody", {}, shown.map((item) => {
           const [stateText, stateCls] = STATE_BADGE[item.state] || [item.state, ""];
           const overdue = isOverdue(item, today);
           const stalled = isStalled(item);
           return h("tr", { class: stalled ? "is-stalled" : null, dataset: { kind: item.kind, state: item.state } },
             h("td", { class: "nowrap" },
-              h("span", { class: `badge ${item.kind === "merge_request" ? "accent" : "outline"}` }, typeLabel(item)),
-              item.relations.includes("reviewer") ? h("div", {}, h("span", { class: "badge info" }, "Reviewer")) : null),
+              h("span", { class: `badge ${item.kind === "merge_request" ? "accent" : "outline"}`, title: `GitLab item type: ${typeLabel(item)}` }, typeLabel(item)),
+              item.relations.includes("reviewer") ? h("div", {}, h("span", { class: "badge info", title: "This person is a reviewer of the merge request" }, "Reviewer")) : null),
             h("td", {},
               h("div", { class: "title" }, safeLink(item.web_url, item.title)),
-              h("div", {}, h("span", { class: "ref" }, item.reference), item.draft ? [" ", h("span", { class: "badge warn" }, "Draft")] : null),
+              h("div", {}, h("span", { class: "ref" }, item.reference), item.draft ? [" ", h("span", { class: "badge warn", title: "Draft: not ready to be merged yet" }, "Draft")] : null),
               item.labels.length ? h("div", {}, item.labels.map(labelChip)) : null),
             h("td", {}, item.project ? safeLink(item.project.web_url, item.project.path || item.project.name) : h("span", { class: "muted" }, "—")),
-            h("td", { class: "nowrap" }, h("span", { class: `badge ${stateCls}` }, stateText),
-              item.priority ? h("div", {}, h("span", { class: "label-chip" }, `priority ${item.priority}`)) : null),
+            h("td", { class: "nowrap" }, h("span", { class: `badge ${stateCls}`, title: `State in GitLab: ${stateText}` }, stateText),
+              item.priority ? h("div", {}, h("span", { class: "label-chip", title: "Priority from a Prio:: or priority:: label" }, `priority ${item.priority}`)) : null),
             h("td", {}, item.milestone || h("span", { class: "muted" }, "—")),
             h("td", { class: "nowrap" }, timeChip(item)),
             h("td", { class: `nowrap${overdue ? " overdue" : ""}` }, item.due_date ? [formatDate(item.due_date), overdue ? " · overdue" : ""] : h("span", { class: "muted" }, "—")),
@@ -462,6 +494,7 @@ export class DashboardView {
         body.append(h("button", {
           type: "button", class: "button ghost small",
           onclick: () => { state.allWork = !state.allWork; renderTable(); },
+          title: "Show every matching item or only the first ten",
         }, state.allWork ? "Show fewer" : `Show all ${items.length}`));
       }
     };

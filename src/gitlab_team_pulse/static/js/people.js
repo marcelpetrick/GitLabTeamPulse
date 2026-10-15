@@ -6,6 +6,13 @@ import { formatDate, plural } from "./format.js";
 import { avatar, freshnessPill, toast } from "./ui.js";
 
 const PAGE = 200;
+const TYPE_TITLES = {
+  all: "Every account type",
+  human: "People",
+  bot: "Bot accounts, e.g. project access tokens and GitLab's own bots",
+  service: "Service accounts used by tools such as Renovate or CI",
+  unknown: "GitLab gave no reliable account type",
+};
 const TYPE_LABELS = { human: "Human", bot: "Bot", service: "Service", unknown: "Unknown" };
 const STATE_CLASS = { active: "ok", blocked: "err", banned: "err", deactivated: "warn", ldap_blocked: "err" };
 const SORTS = {
@@ -39,6 +46,7 @@ export class PeopleView {
   build() {
     this.search = h("input", {
       class: "input", type: "search", id: "people-filter", placeholder: "Filter by name or username…",
+      title: "Type part of a name, a username or an ID; filtering never changes the selection (press / to jump here)",
       autocomplete: "off", spellcheck: "false", "aria-label": "Filter users by name or username",
       oninput: (e) => { this.filter = e.target.value; this.limit = PAGE; this.renderList(); },
     });
@@ -46,6 +54,7 @@ export class PeopleView {
       ["all", "human", "bot", "service", "unknown"].map((type) =>
         h("button", {
           type: "button", "aria-pressed": String(type === this.type), dataset: { type },
+          title: TYPE_TITLES[type],
           onclick: () => {
             this.type = type;
             for (const b of typeGroup.children) b.setAttribute("aria-pressed", String(b.dataset.type === type));
@@ -53,15 +62,15 @@ export class PeopleView {
           },
         }, type === "all" ? "All" : TYPE_LABELS[type])));
     this.stateSelect = h("select", {
-      class: "select", "aria-label": "Account state",
+      class: "select", "aria-label": "Account state", title: "Show only accounts in this GitLab state",
       onchange: (e) => { this.state = e.target.value; this.renderList(); },
     }, h("option", { value: "all" }, "All states"));
     const sortSelect = h("select", {
-      class: "select", "aria-label": "Sort users",
+      class: "select", "aria-label": "Sort users", title: "Order of the account list (account creation date stands in for the join date)",
       onchange: (e) => { this.sort = e.target.value; this.renderList(); },
     }, Object.entries(SORTS).map(([key, [label]]) => h("option", { value: key, selected: key === this.sort }, label)));
     this.selectedToggle = h("button", {
-      type: "button", class: "button small", "aria-pressed": "false",
+      type: "button", class: "button small", "aria-pressed": "false", title: "List only the monitored accounts",
       onclick: () => {
         this.selectedOnly = !this.selectedOnly;
         this.selectedToggle.setAttribute("aria-pressed", String(this.selectedOnly));
@@ -69,7 +78,7 @@ export class PeopleView {
         this.renderList();
       },
     });
-    this.count = h("span", { class: "badge accent", id: "selected-count" });
+    this.count = h("span", { class: "badge accent", id: "selected-count", title: "Accounts monitored on the dashboard" });
     this.directoryInfo = h("span", { class: "people-directory" });
     this.meta = h("div", { class: "people-meta" });
     this.list = h("div", { class: "people-list", role: "table", "aria-label": "GitLab users" });
@@ -79,10 +88,10 @@ export class PeopleView {
         h("div", {},
           h("h1", { id: "people-title" }, "People"),
           h("div", { class: "subtitle" },
-            h("span", { class: "badge info" }, icon("globe"), "Shared selection"),
+            h("span", { class: "badge info", title: "The selection is stored on the server: everyone who opens this dashboard sees the same people" }, icon("globe"), "Shared selection"),
             "Choices here apply to everyone who opens this dashboard.")),
         h("div", { class: "spacer" }),
-        h("button", { type: "button", class: "button primary", onclick: () => this.app.navigate("dashboard") },
+        h("button", { type: "button", class: "button primary", title: "Go to the dashboard of the monitored people", onclick: () => this.app.navigate("dashboard") },
           "Open dashboard", icon("arrow"))),
       h("div", { class: "toolbar people-toolbar" },
         h("div", { class: "search" }, icon("search"), this.search),
@@ -158,7 +167,7 @@ export class PeopleView {
     for (const user of users.slice(0, this.limit)) this.list.append(this.row(user));
     if (users.length > this.limit) {
       this.list.append(h("div", { class: "show-more" },
-        h("button", { type: "button", class: "button small", onclick: () => { this.limit += PAGE; this.renderList(); } },
+        h("button", { type: "button", class: "button small", title: "Show more accounts of this list", onclick: () => { this.limit += PAGE; this.renderList(); } },
           `Show ${Math.min(PAGE, users.length - this.limit)} more of ${users.length - this.limit}`)));
     }
   }
@@ -167,6 +176,7 @@ export class PeopleView {
     const checkbox = h("input", {
       type: "checkbox", class: "checkbox", checked: user.selected, disabled: this.pending.has(user.id),
       id: `select-${user.id}`, "aria-label": `Monitor ${user.name} (@${user.username})`,
+      title: user.selected ? `Stop monitoring ${user.name} on the dashboard` : `Monitor ${user.name} on the dashboard (first sync starts right away)`,
       onchange: (e) => this.toggle(user, e.target.checked),
     });
     return h("div", { class: `people-row${user.selected ? " is-selected" : ""}`, role: "row", dataset: { userId: user.id } },
@@ -176,9 +186,9 @@ export class PeopleView {
         h("div", { class: "name" }, user.name),
         h("div", { class: "username" }, safeLink(user.web_url, `@${user.username}`))),
       h("span", { class: "tags", role: "cell" },
-        h("span", { class: `badge ${user.account_type === "human" ? "outline" : "accent"}` },
+        h("span", { class: `badge ${user.account_type === "human" ? "outline" : "accent"}`, title: TYPE_TITLES[user.account_type] || "Account type" },
           user.account_type === "bot" ? icon("bot") : null, TYPE_LABELS[user.account_type] || user.account_type),
-        h("span", { class: `badge ${STATE_CLASS[user.state] || ""}` }, user.state)),
+        h("span", { class: `badge ${STATE_CLASS[user.state] || ""}`, title: `Account state in GitLab: ${user.state}` }, user.state)),
       h("span", { class: "num mono", role: "cell" }, `#${user.id}`),
       h("span", { class: "num", role: "cell", title: user.created_at || "" }, formatDate(user.created_at)));
   }

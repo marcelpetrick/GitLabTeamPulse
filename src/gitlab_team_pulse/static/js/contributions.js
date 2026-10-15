@@ -166,7 +166,7 @@ export class Skyline {
       class: "skyline-canvas", tabindex: "0", role: "img",
       "aria-label": `3D skyline of ${plural(calendar.total, "contribution")}. Drag or use the arrow keys to rotate, the mouse wheel or plus and minus to zoom, 0 to reset.`,
     });
-    this.resetButton = h("button", { type: "button", class: "button small", onclick: () => this.reset() }, "Reset view");
+    this.resetButton = h("button", { type: "button", class: "button small", title: "Back to the initial angle and zoom", onclick: () => this.reset() }, "Reset view");
     this.element = h("div", { class: "skyline" }, this.canvas,
       h("div", { class: "skyline-controls" },
         h("span", { class: "muted" }, "Drag to rotate · wheel or pinch to zoom · arrow keys, + / −, 0"), this.resetButton));

@@ -5,6 +5,15 @@ import { h, icon } from "./dom.js";
 import { exactTime } from "./format.js";
 import { rel } from "./ui.js";
 
+const BOX_TITLES = {
+  Crawler: "What the background synchronization is doing now (and what started it)",
+  "GitLab upstream": "Whether the last request to GitLab worked, with the last error",
+  "Selected users": "Last successful refresh of the monitored people's data",
+  "User directory": "Last successful refresh of the list of GitLab accounts (hourly)",
+  GitLab: "The GitLab instance this dashboard reads from",
+  Accounts: "Accounts visible to the token, and how many are monitored",
+};
+
 export class Diagnostics {
   constructor(app) {
     this.app = app;
@@ -55,7 +64,7 @@ export class Diagnostics {
       this.box("GitLab", status.gitlab.configured ? status.gitlab.url : "not configured"),
       this.box("Accounts", `${status.users.known} known · ${status.users.selected} selected`),
     ) : null;
-    const toggle = h("label", { class: "muted" },
+    const toggle = h("label", { class: "muted", title: "Also list problems that were solved by a later successful refresh (kept for a week)" },
       h("input", { type: "checkbox", checked: this.includeResolved, onchange: (e) => { this.includeResolved = e.target.checked; this.load(); } }),
       " Show resolved problems");
     const list = h("ul", { class: "diag-list" });
@@ -66,7 +75,12 @@ export class Diagnostics {
       const cls = ["diag-item", error.severity === "warning" ? "warning" : "", error.resolved_at ? "resolved" : ""].join(" ");
       list.append(h("li", { class: cls },
         h("div", { class: "head" },
-          h("span", { class: `badge ${error.resolved_at ? "ok" : error.severity === "warning" ? "warn" : "err"}` },
+          h("span", {
+            class: `badge ${error.resolved_at ? "ok" : error.severity === "warning" ? "warn" : "err"}`,
+            title: error.resolved_at
+              ? "Solved: a later refresh of the same data succeeded"
+              : error.severity === "warning" ? "Warning: something is limited, data is still refreshed" : "Error: this data could not be refreshed; the last good data is shown",
+          },
             error.resolved_at ? icon("check") : icon("warning"), error.resolved_at ? "resolved" : error.severity),
           h("strong", {}, `${error.subsystem} · ${error.operation}`),
           error.user ? h("span", { class: "muted" }, `${error.user.name} (@${error.user.username})`) : null),
@@ -83,6 +97,6 @@ export class Diagnostics {
   }
 
   box(key, value) {
-    return h("div", { class: "box" }, h("div", { class: "k" }, key), h("div", { class: "v" }, value));
+    return h("div", { class: "box", title: BOX_TITLES[key] || key }, h("div", { class: "k" }, key), h("div", { class: "v" }, value));
   }
 }

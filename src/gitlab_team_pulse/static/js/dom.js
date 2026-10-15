@@ -65,7 +65,10 @@ export function clear(el) {
 
 /** Only render links that the server already validated as http(s) GitLab URLs. */
 export function safeLink(url, children, attrs = {}) {
-  if (typeof url === "string" && url.startsWith("mailto:")) return h("a", { href: url, ...attrs }, children);
+  if (typeof url === "string" && url.startsWith("mailto:")) {
+    return h("a", { href: url, title: `Write an e-mail to ${url.slice(7)}`, ...attrs }, children);
+  }
   if (typeof url !== "string" || !/^https?:\/\//.test(url)) return h("span", attrs, children);
-  return h("a", { href: url, target: "_blank", rel: "noopener noreferrer", ...attrs }, children);
+  // Every http(s) link the server passes on points into the configured GitLab.
+  return h("a", { href: url, target: "_blank", rel: "noopener noreferrer", title: "Open in GitLab (new tab)", ...attrs }, children);
 }

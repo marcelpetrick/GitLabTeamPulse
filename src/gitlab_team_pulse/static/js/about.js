@@ -29,11 +29,11 @@ export class AboutDialog {
   }
 
   render(info) {
-    const repository = safeLink(info.repository, info.repository.replace(/^https:\/\//, ""));
+    const repository = safeLink(info.repository, info.repository.replace(/^https:\/\//, ""), { title: "Source code on GitHub (new tab)" });
     this.body.replaceChildren(
       h("div", { class: "about-brand" },
         h("strong", { class: "about-name" }, info.name),
-        h("span", { class: "badge accent", id: "about-version" }, `v${info.version}`)),
+        h("span", { class: "badge accent", id: "about-version", title: "Installed version (see CHANGELOG.md)" }, `v${info.version}`)),
       h("p", { class: "muted" }, info.description),
       h("dl", { class: "about-facts" },
         h("dt", {}, "Author"), h("dd", {}, info.author, " · ", safeLink(`mailto:${info.email}`, info.email)),
@@ -42,7 +42,10 @@ export class AboutDialog {
         h("dt", {}, "Python"), h("dd", {}, info.python)),
       h("h3", {}, "Runtime dependencies"),
       h("table", { class: "about-deps" },
-        h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "Package"), h("th", { scope: "col" }, "Version"), h("th", { scope: "col" }, "License"))),
+        h("thead", {}, h("tr", {},
+          h("th", { scope: "col", title: "Python package the server runs on" }, "Package"),
+          h("th", { scope: "col", title: "Installed version" }, "Version"),
+          h("th", { scope: "col", title: "License declared by the package" }, "License"))),
         h("tbody", {}, info.dependencies.map((dep) => h("tr", {},
           h("td", {}, dep.name), h("td", { class: "mono" }, dep.version || "—"), h("td", {}, dep.license))))),
       h("p", { class: "muted about-note" }, info.note));
