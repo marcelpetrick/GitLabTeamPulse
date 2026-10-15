@@ -3,6 +3,13 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.3.2 (2026-10-15): dependency update
+
+- Dependencies on the latest stable releases: fastapi 0.143.1, pydantic 2.14.1,
+  pydantic-settings 2.16.0, SQLAlchemy 2.1.4, playwright 1.64.0, pre-commit 4.7.0, ruff 0.17.0,
+  uv 0.13.1 (Docker image, GitHub Actions, GitLab CI), setup-uv v10.3.0, upload-artifact v7.0.2.
+- README screenshots regenerated; the dashboard shots now include the contribution calendar.
+
 ## 0.3.1 (2026-10-06): dependency update
 
 - Dependencies on the latest stable releases: fastapi 0.142.2, SQLAlchemy 2.1.3, uvicorn
