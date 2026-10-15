@@ -3,6 +3,20 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.4.1 (2026-10-15): About dialog, clearer review signal, diagnostics fix
+
+- **About dialog** (top bar): version, author and contact, license, source link, Python version
+  and the runtime dependencies with their versions and licenses, read from the installed
+  package (`GET /api/about`).
+- **"Reviewer not monitored"** replaces the misleading "Reviewer outside the team": the signal
+  only means none of the reviewers is monitored on this dashboard (usually colleagues);
+  reviewers are shown with their full names.
+- **Diagnostics**: open problems of people who are no longer selected or in a team are
+  resolved by the hourly cleanup instead of staying forever.
+- Dependencies: fastapi 0.143.2.
+- Docs: README showcase of the 0.4 features with new screenshots (milestones, team editor,
+  About), [`AGENTS.md`](AGENTS.md) for working in the repository, plan for 0.4.1.
+
 ## 0.4.0 (2026-10-15): steering signals, teams and team reports
 
 - **Needs attention** on the dashboard: one filterable list across the monitored people of

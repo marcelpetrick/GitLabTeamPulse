@@ -133,6 +133,8 @@ per-person timelog hygiene, locally entered absences.
 
 # Plan — v0.4.1: diagnostics fix, About dialog, showcase
 
+**Status: done, released as v0.4.1 on 2026-10-15.**
+
 Requested 2026-10-15 after the v0.4.0 release. Branch: `feature/about-and-showcase`.
 
 1. **Stale diagnostics** (done in `c4d9fe7`): open problems of people who are neither selected
