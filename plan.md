@@ -183,3 +183,11 @@ Requested 2026-10-15. Branch: `feature/clickable-alerts`.
    confirmed bugs; fix them, with tests.
 5. Browser tests, screenshots and docs updated; full pipeline; `/reviewBranch`; release v0.4.2;
    CI green; dashboard restarted and shown in Firefox.
+
+## Follow-ups (not scheduled)
+
+- **Epic load on Premium instances** (review of v0.4.2): epics are fetched without an update
+  cutoff and filtered client-side, so each run pages through every epic ever assigned to a
+  person. Use a second, open-only GraphQL query (like issues and MRs) once the `state` filter
+  of `group.workItems` is verified on the target GitLab version. GitLab Free is not affected.
+- Python 3.15 (released 2026-10-09) for the Docker image and CI.
