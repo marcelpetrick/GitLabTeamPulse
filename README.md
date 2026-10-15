@@ -6,7 +6,7 @@
 [![GHCR image](https://img.shields.io/badge/ghcr.io-gitlabteampulse-2496ed?logo=docker&logoColor=white)](https://github.com/marcelpetrick/GitLabTeamPulse/pkgs/container/gitlabteampulse)
 [![License: GPL v3 or later](https://img.shields.io/badge/license-GPLv3%20or%20later-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776ab.svg)](https://www.python.org/)
-[![FastAPI 0.143.1](https://img.shields.io/badge/FastAPI-0.143.1-009688.svg)](https://fastapi.tiangolo.com/)
+[![FastAPI 0.143.2](https://img.shields.io/badge/FastAPI-0.143.2-009688.svg)](https://fastapi.tiangolo.com/)
 [![Coverage: 99%](https://img.shields.io/badge/coverage-99%25-brightgreen.svg)](pyproject.toml)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-fe5196.svg)](https://www.conventionalcommits.org/)
 
@@ -283,6 +283,8 @@ appended, e.g. `feat(docker): … (v0.1.0)`. See [`CHANGELOG.md`](CHANGELOG.md).
 ## Documentation
 
 - [`VISION.md`](VISION.md): full product requirements and acceptance criteria.
+- [`AGENTS.md`](AGENTS.md): how to work in this repository (commands, quality gate,
+  architecture and frontend rules, release flow), written for AI coding agents and humans alike.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md): C4 architecture overview with Mermaid
   diagrams (context, containers, components, dynamic, data and deployment views).
 - [`docs/GRAPHQL.md`](docs/GRAPHQL.md): what GraphQL is, why it is used for timelogs and
