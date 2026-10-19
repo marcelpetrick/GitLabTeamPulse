@@ -15,6 +15,7 @@ from gitlab_team_pulse.models import (
     ActivityEventRecord,
     Project,
     TimelogRecord,
+    User,
     WorkItemAssignee,
     WorkItemRecord,
 )
@@ -557,3 +558,78 @@ async def test_state_filter_failing_after_it_worked_keeps_stored_epics(
         assert store.get_state(session, "work", ALEX).status == "error"
     assert after == before
     assert service.runtime.epics_open_filter is True
+
+
+def epic_owner_ids(fake_app: FastAPI) -> list[int]:
+    by_name = {u["username"]: u["id"] for u in fake_app.state.data.users}
+    return sorted({by_name[e["assignee"]] for e in fake_app.state.data.epics})
+
+
+async def test_epics_of_several_people_share_one_query_per_group(
+    service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI
+) -> None:
+    owners = epic_owner_ids(fake_app)
+    assert len(owners) == 3
+    await select_users(service, session_factory, *owners)
+    assert await service.sync_selected("scheduled") == "ok"
+    queries = fake_app.state.epic_queries
+    assert queries
+    assert all(len(q["usernames"]) == 3 and "username" not in q for q in queries)
+    keys = [(q["fullPath"], "state" in q, bool(q.get("updatedAfter"))) for q in queries]
+    assert len(keys) == len(set(keys))  # each group and kind asked once for everyone
+    assert service.runtime.epics_batch is True
+    expected = {(e["reference"], e["assignee"]) for e in fake_app.state.data.epics}
+    with session_factory() as session:
+        rows = session.execute(
+            select(WorkItemRecord.reference, User.username)
+            .join(WorkItemAssignee, WorkItemAssignee.work_item_id == WorkItemRecord.id)
+            .join(User, User.id == WorkItemAssignee.user_id)
+            .where(WorkItemRecord.kind == "epic")
+        )
+        stored = {(reference, username) for reference, username in rows}
+    assert stored == expected  # every person keeps exactly their own epics
+
+
+async def test_unsupported_shared_epic_query_falls_back_to_one_per_person(
+    service: SyncService,
+    session_factory: sessionmaker[Session],
+    fake_app: FastAPI,
+    clock: Clock,
+) -> None:
+    fake_app.state.epic_or_filter = False
+    await select_users(service, session_factory, *epic_owner_ids(fake_app))
+    assert await service.sync_selected("scheduled") == "ok"
+    assert service.runtime.epics_batch is False
+    with session_factory() as session:
+        assert count(session, WorkItemRecord, kind="epic") == len(fake_app.state.data.epics)
+    fake_app.state.epic_queries.clear()
+    clock.advance(minutes=10)
+    assert await service.sync_selected("scheduled") == "ok"
+    assert fake_app.state.epic_queries
+    assert all("usernames" not in q for q in fake_app.state.epic_queries)  # not tried again
+
+
+async def test_shared_epic_query_failing_after_it_worked_keeps_stored_epics(
+    service: SyncService,
+    session_factory: sessionmaker[Session],
+    fake_app: FastAPI,
+    clock: Clock,
+) -> None:
+    await select_users(service, session_factory, *epic_owner_ids(fake_app))
+    await service.sync_selected("scheduled")
+    assert service.runtime.epics_batch is True
+    fake_app.state.epic_or_filter = False  # e.g. a transient server-side problem
+    clock.advance(minutes=10)
+    assert await service.sync_selected("scheduled") == "partial"
+    with session_factory() as session:
+        assert count(session, WorkItemRecord, kind="epic") == len(fake_app.state.data.epics)
+    assert service.runtime.epics_batch is True
+
+
+async def test_epics_without_a_running_batch_are_asked_per_person(
+    service: SyncService, session_factory: sessionmaker[Session], fake_app: FastAPI
+) -> None:
+    await select_users(service, session_factory, ALEX)
+    epics = await service._group_epics(service.client(), "alex.berger", {"platform"}, None)
+    assert all("username" in q for q in fake_app.state.epic_queries)
+    assert {e.reference for e in epics} <= {e["reference"] for e in fake_app.state.data.epics}

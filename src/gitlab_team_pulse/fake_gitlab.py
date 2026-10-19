@@ -508,7 +508,12 @@ def _paginate(request: Request, items: list[dict[str, Any]]) -> JSONResponse:
     per_page = min(max(int(request.query_params.get("per_page", "20")), 1), 100)
     start = (page - 1) * per_page
     chunk = items[start : start + per_page]
-    headers = {"X-Page": str(page), "X-Per-Page": str(per_page), "X-Total": str(len(items))}
+    headers = {
+        "X-Page": str(page),
+        "X-Per-Page": str(per_page),
+        "X-Total": str(len(items)),
+        "X-Total-Pages": str(max(-(-len(items) // per_page), 1)),
+    }
     if start + per_page < len(items):
         params = dict(request.query_params)
         params["page"] = str(page + 1)
@@ -639,6 +644,7 @@ def create_fake_gitlab(
     app.state.graphql_error = None  # set to a message to simulate missing GraphQL capability
     app.state.epics_supported = True
     app.state.epic_state_filter = True  # False: the open-only epic query is rejected
+    app.state.epic_or_filter = True  # False: the shared epic query for several people is rejected
     app.state.epic_queries = []  # variables of every epic query, for load assertions
     app.state.latency = 0.0  # seconds added to every API response (makes "Refreshing" visible)
 
@@ -779,16 +785,33 @@ def create_fake_gitlab(
             return JSONResponse(
                 {"errors": [{"message": "Field 'workItems' doesn't accept argument 'state'"}]}
             )
-        app.state.epic_queries.append(dict(variables))
-        updated_after = _parse_time(variables.get("updatedAfter"))
-        wanted_state = {"opened": "OPEN", "closed": "CLOSED"}.get(variables.get("state") or "")
-        path = variables.get("fullPath")
-        if path not in {
+        if "usernames" in variables and not app.state.epic_or_filter:
+            return JSONResponse(
+                {"errors": [{"message": "Field 'workItems' doesn't accept argument 'or'"}]}
+            )
+        groups = {
             project["path_with_namespace"].split("/")[0]
             for project in app.state.data.projects.values()
-        }:
-            return JSONResponse({"data": {"group": None}})
-        nodes = [
+        }
+        data: dict[str, Any] = {}
+        index = 0
+        while f"p{index}" in variables:  # one aliased block (g0, g1, …) per group path
+            path = variables[f"p{index}"]
+            others = {k: v for k, v in variables.items() if not k.startswith("p")}
+            app.state.epic_queries.append({"fullPath": path, **others})
+            data[f"g{index}"] = (
+                {"workItems": {"nodes": epic_nodes(request, variables, path), "pageInfo": {}}}
+                if path in groups
+                else None
+            )
+            index += 1
+        return JSONResponse({"data": data})
+
+    def epic_nodes(request: Request, variables: dict[str, Any], path: str) -> list[dict[str, Any]]:
+        wanted = set(variables.get("usernames") or [variables.get("username")])
+        updated_after = _parse_time(variables.get("updatedAfter"))
+        wanted_state = {"opened": "OPEN", "closed": "CLOSED"}.get(variables.get("state") or "")
+        return [
             {
                 "id": epic["id"],
                 "iid": epic["iid"],
@@ -809,16 +832,13 @@ def create_fake_gitlab(
             }
             for epic in app.state.data.epics
             if epic["group"] == path
-            and epic["assignee"] == variables.get("username")
+            and epic["assignee"] in wanted
             and (wanted_state is None or epic["state"] == wanted_state)
             and (
                 updated_after is None
                 or datetime.fromisoformat(epic["updatedAt"].replace("Z", "+00:00")) >= updated_after
             )
         ]
-        return JSONResponse(
-            {"data": {"group": {"workItems": {"nodes": nodes, "pageInfo": {"hasNextPage": False}}}}}
-        )
 
     @app.post("/api/graphql")
     async def graphql(request: Request) -> JSONResponse:

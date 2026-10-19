@@ -70,9 +70,12 @@ query($username: String!, $start: Time!, $end: Time!, $after: String) {
 
 
 EPICS_TEMPLATE = """
-query($fullPath: ID!, $username: String!, $updatedAfter: Time, $after: String__STATE_VAR__) {
-  group(fullPath: $fullPath) {
-    workItems(types: [EPIC], assigneeUsernames: [$username], includeDescendants: true,
+query(__GROUP_VARS__, __ASSIGNEE_VAR__, $updatedAfter: Time, $after: String__STATE_VAR__) {
+__GROUPS__
+}
+"""
+EPICS_GROUP = """  __ALIAS__: group(fullPath: $__PATH_VAR__) {
+    workItems(types: [EPIC], __ASSIGNEE_ARG__, includeDescendants: true,
               updatedAfter: $updatedAfter, first: 50, after: $after__STATE_ARG__) {
       nodes {
         id iid title state webUrl createdAt updatedAt closedAt reference(full: true)
@@ -87,14 +90,41 @@ query($fullPath: ID!, $username: String!, $updatedAfter: Time, $after: String__S
       }
       pageInfo { hasNextPage endCursor }
     }
-  }
-}
-"""
-EPICS_QUERY = EPICS_TEMPLATE.replace("__STATE_VAR__", "").replace("__STATE_ARG__", "")
+  }"""
+# GitLab rates one group block at about 37 of its maximum query complexity of 300.
+GROUPS_PER_EPIC_QUERY = 5
+MAX_BATCH_USERNAMES = 100
+# A top-level path that is a personal namespace, not a group, is not asked again for a day.
+NOT_A_GROUP_SECONDS = 24 * 3600
+
+
+def _epics_query(*, batch: bool, open_only: bool, groups: int = 1) -> str:
+    """Epics of ``groups`` groups in one request (aliases ``g0``, ``g1``…, paths in ``$p0``…);
+    for one person (``assigneeUsernames``: all of them) or several at once (``or``: any of
+    them); every epic or only open ones (``state``)."""
+    blocks = "\n".join(
+        EPICS_GROUP.replace("__ALIAS__", f"g{i}").replace("__PATH_VAR__", f"p{i}")
+        for i in range(groups)
+    )
+    query = (
+        EPICS_TEMPLATE.replace("__GROUPS__", blocks)
+        .replace("__GROUP_VARS__", ", ".join(f"$p{i}: ID!" for i in range(groups)))
+        .replace("__ASSIGNEE_VAR__", "$usernames: [String!]!" if batch else "$username: String!")
+        .replace(
+            "__ASSIGNEE_ARG__",
+            "or: {assigneeUsernames: $usernames}" if batch else "assigneeUsernames: [$username]",
+        )
+    )
+    if open_only:
+        return query.replace("__STATE_VAR__", ", $state: IssuableState").replace(
+            "__STATE_ARG__", ", state: $state"
+        )
+    return query.replace("__STATE_VAR__", "").replace("__STATE_ARG__", "")
+
+
+EPICS_QUERY = _epics_query(batch=False, open_only=False)
 # Only open epics, however old: stalled epics stay visible without paging through all history.
-OPEN_EPICS_QUERY = EPICS_TEMPLATE.replace("__STATE_VAR__", ", $state: IssuableState").replace(
-    "__STATE_ARG__", ", state: $state"
-)
+OPEN_EPICS_QUERY = _epics_query(batch=False, open_only=True)
 
 
 CAPABILITY_PATTERN = re.compile(
@@ -142,6 +172,7 @@ class GitLabClient:
         self._sleep = sleep
         self._backoff_base = backoff_base
         self._max_pages = max_pages
+        self._not_groups: dict[str, float] = {}  # path -> monotonic time to ask again
         self.request_count = 0
         self._http = httpx.AsyncClient(
             base_url=self._api_prefix,
@@ -262,20 +293,26 @@ class GitLabClient:
         *,
         limit: int | None = None,
         complete: bool = False,
+        parallel: bool = False,
     ) -> list[dict[str, Any]]:
         """Follow ``Link: rel=next`` (keyset or offset) or ``X-Next-Page`` headers.
 
         With ``complete``, hitting the page cap raises instead of returning a partial list.
+        With ``parallel`` and offset pagination that reports ``X-Total-Pages``, the remaining
+        pages are fetched at the same time (within the concurrency limit).
         """
         query: dict[str, Any] | None = {"per_page": PER_PAGE, **(params or {})}
         url = path
         items: list[dict[str, Any]] = []
-        for _ in range(self._max_pages):
+        for number in range(self._max_pages):
             response = await self._request("GET", url, params=query)
             page = self._json(response, path)
             if not isinstance(page, list):
                 raise GitLabResponseError(f"{path}: expected a list page")
             items.extend(page)
+            total = response.headers.get("X-Total-Pages", "").strip()
+            if parallel and number == 0 and limit is None and total.isdigit() and int(total) > 1:
+                return items + await self._remaining_pages(path, query or {}, int(total), complete)
             if limit is not None and len(items) >= limit:
                 return items[:limit]
             next_url = response.links.get("next", {}).get("url")
@@ -293,6 +330,26 @@ class GitLabClient:
             raise GitLabResponseError(f"{path}: more than {self._max_pages} pages")
         log.warning("%s: stopped after %d pages", path, self._max_pages)
         return items
+
+    async def _remaining_pages(
+        self, path: str, query: dict[str, Any], total: int, complete: bool
+    ) -> list[dict[str, Any]]:
+        last = min(total, self._max_pages)
+        if total > last:
+            if complete:
+                raise GitLabResponseError(f"{path}: more than {self._max_pages} pages")
+            log.warning("%s: stopped after %d pages", path, self._max_pages)
+
+        async def fetch(number: int) -> list[dict[str, Any]]:
+            page = self._json(
+                await self._request("GET", path, params={**query, "page": number}), path
+            )
+            if not isinstance(page, list):
+                raise GitLabResponseError(f"{path}: expected a list page")
+            return page
+
+        pages = await asyncio.gather(*(fetch(n) for n in range(2, last + 1)))
+        return [item for page in pages for item in page]
 
     async def graphql(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
         response = await self._request(
@@ -328,7 +385,9 @@ class GitLabClient:
     async def list_users(self) -> list[GitLabUser]:
         """Every account visible to the token; bots, blocked and inactive included."""
         pages = await self.paginate(
-            "users", {"order_by": "id", "sort": "asc", "exclude_internal": "false"}
+            "users",
+            {"order_by": "id", "sort": "asc", "exclude_internal": "false"},
+            parallel=True,
         )
         return [guarded("user", parse_user, item) for item in pages]
 
@@ -463,30 +522,80 @@ class GitLabClient:
         Raises ``GitLabCapabilityError`` when the installation has no work-item epics
         (older version or missing license); unknown or personal namespaces are skipped.
         """
-        result: dict[int, WorkItem] = {}
-        for path in sorted(group_paths):
-            cursor: str | None = None
-            for _ in range(self._max_pages):
-                variables: dict[str, Any] = {
-                    "fullPath": path,
-                    "username": username,
-                    "updatedAfter": updated_after.isoformat() if updated_after else None,
-                    "after": cursor,
-                }
-                if open_only:
-                    variables["state"] = "opened"
-                data = await self.graphql(OPEN_EPICS_QUERY if open_only else EPICS_QUERY, variables)
-                group = data.get("group")
-                if not isinstance(group, dict):
+        return await self.get_epics([username], group_paths, updated_after, open_only=open_only)
+
+    async def get_epics(
+        self,
+        usernames: list[str],
+        group_paths: set[str],
+        updated_after: datetime | None,
+        *,
+        open_only: bool = False,
+    ) -> list[WorkItem]:
+        """Epics assigned to any of ``usernames`` in the given top-level groups.
+
+        Up to ``GROUPS_PER_EPIC_QUERY`` groups share one request and the requests run in
+        parallel; several people share them through the ``or`` filter. A group with more
+        than one page continues on its own. Paths that turn out not to be groups (personal
+        namespaces) are skipped for ``NOT_A_GROUP_SECONDS``.
+        """
+        if not 0 < len(usernames) <= MAX_BATCH_USERNAMES:
+            raise ValueError(f"between 1 and {MAX_BATCH_USERNAMES} usernames, not {len(usernames)}")
+        batch = len(usernames) > 1
+        now = time.monotonic()
+        paths = sorted(p for p in group_paths if self._not_groups.get(p, 0.0) <= now)
+        common: dict[str, Any] = {"usernames": usernames} if batch else {"username": usernames[0]}
+        common["updatedAfter"] = updated_after.isoformat() if updated_after else None
+        if open_only:
+            common["state"] = "opened"
+
+        def connection(group: Any, path: str) -> dict[str, Any] | None:
+            if not isinstance(group, dict):
+                self._not_groups[path] = time.monotonic() + NOT_A_GROUP_SECONDS
+                return None
+            found = group.get("workItems")
+            if not isinstance(found, dict):
+                raise GitLabResponseError("workItems: missing connection")
+            return found
+
+        def nodes(found: dict[str, Any]) -> list[WorkItem]:
+            return [guarded("epic", parse_epic, node) for node in found.get("nodes") or []]
+
+        async def rest_of_group(path: str, cursor: str | None) -> list[WorkItem]:
+            query = _epics_query(batch=batch, open_only=open_only)
+            result: list[WorkItem] = []
+            for _ in range(self._max_pages - 1):
+                data = await self.graphql(query, {"p0": path, **common, "after": cursor})
+                found = connection(data.get("g0"), path)
+                if found is None:
                     break
-                connection = group.get("workItems")
-                if not isinstance(connection, dict):
-                    raise GitLabResponseError("workItems: missing connection")
-                for node in connection.get("nodes") or []:
-                    epic = guarded("epic", parse_epic, node)
-                    result[epic.gitlab_id] = epic
-                page_info = connection.get("pageInfo") or {}
+                result.extend(nodes(found))
+                page_info = found.get("pageInfo") or {}
                 if not page_info.get("hasNextPage"):
                     break
                 cursor = page_info.get("endCursor")
-        return list(result.values())
+            return result
+
+        async def chunk(group: list[str]) -> list[WorkItem]:
+            query = _epics_query(batch=batch, open_only=open_only, groups=len(group))
+            variables = {**{f"p{i}": path for i, path in enumerate(group)}, **common}
+            data = await self.graphql(query, {**variables, "after": None})
+            result: list[WorkItem] = []
+            more = []
+            for i, path in enumerate(group):
+                found = connection(data.get(f"g{i}"), path)
+                if found is None:
+                    continue
+                result.extend(nodes(found))
+                page_info = found.get("pageInfo") or {}
+                if page_info.get("hasNextPage"):
+                    more.append(rest_of_group(path, page_info.get("endCursor")))
+            for rest in await asyncio.gather(*more):
+                result.extend(rest)
+            return result
+
+        size = GROUPS_PER_EPIC_QUERY
+        found = await asyncio.gather(
+            *(chunk(paths[i : i + size]) for i in range(0, len(paths), size))
+        )
+        return list({epic.gitlab_id: epic for group in found for epic in group}.values())

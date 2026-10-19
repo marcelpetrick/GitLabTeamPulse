@@ -53,6 +53,11 @@ TOO_MANY_TRACKED = (
 )
 
 
+def _top_group(reference: str) -> str:
+    """``group/sub&3`` -> ``group``: the top-level group an epic reference lives in."""
+    return reference.split("&", 1)[0].split("/", 1)[0]
+
+
 def contribution_grid_start(today: date) -> date:
     """First day of the 53-week calendar grid: a Sunday, as on GitLab profiles."""
     start = today - timedelta(weeks=CONTRIBUTION_WEEKS - 1)
@@ -113,6 +118,18 @@ class RuntimeState:
     epics_checked_at: datetime | None = None
     epics_failing_since: datetime | None = None
     epics_open_filter: bool | None = None  # does GitLab accept the open-only epic query?
+    epics_batch: bool | None = None  # does GitLab accept one epic query for several people?
+
+
+@dataclass
+class EpicBatch:
+    """Epic queries of one selected run, shared by its people: one query per group and kind
+    for everyone instead of one per group, kind and person."""
+
+    usernames: list[str]
+    tasks: dict[tuple[bool, bool, str], asyncio.Future[list[WorkItem]]] = field(
+        default_factory=dict
+    )
 
 
 class SyncService:
@@ -135,6 +152,7 @@ class SyncService:
         # Negative cache: projects whose metadata lookup failed (deleted, no access) are not
         # requested again on every run, only after the retention period.
         self._project_failures: dict[int, datetime] = {}
+        self._epic_batch: EpicBatch | None = None
 
     # ------------------------------------------------------------------ plumbing
 
@@ -198,8 +216,7 @@ class SyncService:
         try:
             try:
                 client = self.client()
-                me = await client.current_user()
-                users = await client.list_users()
+                me, users = await asyncio.gather(client.current_user(), client.list_users())
             except GitLabError as exc:
                 self._upstream(exc)
                 self._directory_failed(run_id, exc)
@@ -320,6 +337,7 @@ class SyncService:
                 )
             outcomes: list[tuple[int, int, set[int]]] = []
             if client is not None:
+                self._epic_batch = EpicBatch([username for _, username in users][:100])
                 outcomes = await asyncio.gather(
                     *(self._sync_user(client, uid, username, run_id) for uid, username in users),
                     *(
@@ -350,6 +368,7 @@ class SyncService:
                 run_id, user_ids, status, summary, attempted=len(outcomes), succeeded=succeeded
             )
         finally:
+            self._epic_batch = None
             self.runtime.selected_scope = None
             self._end("selected")
 
@@ -537,7 +556,7 @@ class SyncService:
         try:
             # Epics updated inside the work window, plus the open ones however old (stalled
             # work must not drop out of view).
-            recent = await client.get_user_epics(username, groups, cutoff)
+            recent = await self._group_epics(client, username, groups, cutoff)
             still_open = await self._open_epics(client, username, groups)
             epics = list({e.gitlab_id: e for e in [*recent, *still_open]}.values())
         except GitLabCapabilityError as exc:
@@ -583,7 +602,7 @@ class SyncService:
         """
         if self.runtime.epics_open_filter is not False:
             try:
-                found = await client.get_user_epics(username, groups, None, open_only=True)
+                found = await self._group_epics(client, username, groups, None, open_only=True)
             except GitLabError as exc:
                 # The plain epic query just worked, so a rejection here is about the filter.
                 if self.runtime.epics_open_filter:
@@ -593,8 +612,61 @@ class SyncService:
             else:
                 self.runtime.epics_open_filter = True
                 return [e for e in found if e.state == "opened"]
-        everything = await client.get_user_epics(username, groups, None)
+        everything = await self._group_epics(client, username, groups, None)
         return [e for e in everything if e.state == "opened"]
+
+    async def _group_epics(
+        self,
+        client: GitLabClient,
+        username: str,
+        groups: set[str],
+        updated_after: datetime | None,
+        *,
+        open_only: bool = False,
+    ) -> list[WorkItem]:
+        """This person's epics, from queries shared with everyone in the run when possible.
+
+        The cut-off differs between people only by the moments their work lists finished, so
+        the first person's cut-off serves the whole run (a few seconds more is harmless).
+        """
+        batch = self._epic_batch
+        if (
+            batch is None
+            or username not in batch.usernames
+            or len(batch.usernames) < 2
+            or self.runtime.epics_batch is False
+        ):
+            return await client.get_user_epics(username, groups, updated_after, open_only=open_only)
+        kind = (open_only, updated_after is not None)
+        missing = {group for group in groups if (*kind, group) not in batch.tasks}
+        if missing:  # the groups nobody asked for yet, in as few requests as possible
+            future = asyncio.ensure_future(
+                client.get_epics(batch.usernames, missing, updated_after, open_only=open_only)
+            )
+            for group in missing:
+                batch.tasks[(*kind, group)] = future
+        futures = list({id(f): f for f in (batch.tasks[(*kind, g)] for g in groups)}.values())
+        results = await asyncio.gather(*futures, return_exceptions=True)
+        failure = next((r for r in results if isinstance(r, BaseException)), None)
+        if failure is not None:
+            if self.runtime.epics_batch or not isinstance(failure, GitLabError):
+                raise failure
+            # Before the shared query ever worked, a rejection may be about the ``or`` filter:
+            # ask for this person alone. If that works, stop sharing for this process.
+            found = await client.get_user_epics(
+                username, groups, updated_after, open_only=open_only
+            )
+            self.runtime.epics_batch = False
+            log.info("shared epic query not supported, asking per person: %s", failure)
+            return found
+        self.runtime.epics_batch = True
+        return [
+            epic
+            for found in results
+            if not isinstance(found, BaseException)
+            for epic in found
+            if username in epic.assignees and _top_group(epic.reference) in groups
+        ]
 
     async def _sync_work(
         self, client: GitLabClient, user_id: int, username: str, run_id: str

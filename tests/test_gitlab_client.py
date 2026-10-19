@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime
 
@@ -412,37 +413,47 @@ async def test_epics_skip_personal_namespaces_and_paginate(client: GitLabClient)
         "title": "E",
         "updatedAt": "2026-09-20T10:00:00Z",
     }
-    respx.post(f"{BASE}/api/graphql").mock(
+    route = respx.post(f"{BASE}/api/graphql").mock(
         side_effect=[
-            httpx.Response(200, json={"data": {"group": None}}),
             httpx.Response(
                 200,
                 json={
                     "data": {
-                        "group": {
+                        "g0": None,  # "alex" is a personal namespace, not a group
+                        "g1": {
                             "workItems": {
                                 "nodes": [node],
                                 "pageInfo": {"hasNextPage": True, "endCursor": "c"},
                             }
-                        }
+                        },
                     }
                 },
             ),
             httpx.Response(
                 200,
-                json={"data": {"group": {"workItems": {"nodes": [node], "pageInfo": {}}}}},
+                json={"data": {"g0": {"workItems": {"nodes": [node], "pageInfo": {}}}}},
+            ),
+            httpx.Response(
+                200, json={"data": {"g0": {"workItems": {"nodes": [], "pageInfo": {}}}}}
             ),
         ]
     )
     now = datetime(2026, 9, 21, tzinfo=UTC)
     epics = await client.get_user_epics("alex", {"alex", "grp"}, now)
     assert [e.gitlab_id for e in epics] == [5]
+    first, second = (json.loads(call.request.content) for call in route.calls)
+    assert (first["variables"]["p0"], first["variables"]["p1"]) == ("alex", "grp")
+    assert (second["variables"]["p0"], second["variables"]["after"]) == ("grp", "c")
+    await client.get_user_epics("alex", {"alex", "grp"}, now)
+    third = json.loads(route.calls.last.request.content)
+    assert third["variables"]["p0"] == "grp"
+    assert "p1" not in third["variables"]  # the personal namespace is not asked again
 
 
 @respx.mock
 async def test_epics_malformed_connection(client: GitLabClient) -> None:
     respx.post(f"{BASE}/api/graphql").mock(
-        return_value=httpx.Response(200, json={"data": {"group": {"workItems": None}}})
+        return_value=httpx.Response(200, json={"data": {"g0": {"workItems": None}}})
     )
     with pytest.raises(GitLabResponseError):
         await client.get_user_epics("alex", {"grp"}, datetime(2026, 9, 21, tzinfo=UTC))
@@ -474,3 +485,109 @@ def test_capability_classification(message: str, capability: bool) -> None:
     from gitlab_team_pulse.gitlab.client import is_capability_message
 
     assert is_capability_message(message) is capability
+
+
+@respx.mock
+async def test_epics_for_several_people_and_groups_share_requests(client: GitLabClient) -> None:
+    def answer(request: httpx.Request) -> httpx.Response:
+        variables = json.loads(request.content)["variables"]
+        groups = [key for key in variables if key.startswith("p")]
+        empty = {"workItems": {"nodes": [], "pageInfo": {}}}
+        return httpx.Response(200, json={"data": {f"g{i}": empty for i in range(len(groups))}})
+
+    route = respx.post(f"{BASE}/api/graphql").mock(side_effect=answer)
+    groups = {f"group{n}" for n in range(7)}
+    await client.get_epics(["a", "b"], groups, None, open_only=True)
+    bodies = [json.loads(call.request.content) for call in route.calls]
+    assert len(bodies) == 2  # seven groups in chunks of five, everyone at once
+    assert sorted(len([k for k in b["variables"] if k.startswith("p")]) for b in bodies) == [2, 5]
+    assert all(b["variables"]["usernames"] == ["a", "b"] for b in bodies)
+    assert all("or: {assigneeUsernames: $usernames}" in b["query"] for b in bodies)
+    assert all(b["variables"]["state"] == "opened" for b in bodies)
+    assert await client.get_epics(["a"], {"group0"}, None) == []
+    last = json.loads(route.calls.last.request.content)
+    assert last["variables"]["username"] == "a"
+    assert "assigneeUsernames: [$username]" in last["query"]
+
+
+@pytest.mark.parametrize("count", [0, 101])
+async def test_epic_batches_have_a_size_limit(client: GitLabClient, count: int) -> None:
+    with pytest.raises(ValueError, match="between 1 and 100 usernames"):
+        await client.get_epics([f"u{n}" for n in range(count)], {"g"}, None)
+
+
+@respx.mock
+async def test_parallel_pagination_fetches_the_remaining_pages_at_once(
+    client: GitLabClient,
+) -> None:
+    def answer(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params.get("page", "1"))
+        return httpx.Response(200, json=[user(page)], headers={"X-Total-Pages": "4"})
+
+    route = respx.get(f"{API}/users").mock(side_effect=answer)
+    users = await client.list_users()
+    assert sorted(u.id for u in users) == [1, 2, 3, 4]
+    assert sorted(call.request.url.params.get("page", "1") for call in route.calls) == [
+        "1",
+        "2",
+        "3",
+        "4",
+    ]
+
+
+@respx.mock
+async def test_parallel_pagination_respects_the_page_cap(client: GitLabClient) -> None:
+    respx.get(f"{API}/things").mock(
+        side_effect=lambda request: httpx.Response(
+            200,
+            json=[{"page": request.url.params.get("page", "1")}],
+            headers={"X-Total-Pages": "9"},
+        )
+    )
+    found = await client.paginate("things", parallel=True)
+    assert len(found) == 5  # max_pages=5 in this fixture
+    with pytest.raises(GitLabResponseError, match="more than 5 pages"):
+        await client.paginate("things", parallel=True, complete=True)
+
+
+@respx.mock
+async def test_parallel_pagination_rejects_a_non_list_page(client: GitLabClient) -> None:
+    respx.get(f"{API}/things").mock(
+        side_effect=lambda request: httpx.Response(
+            200,
+            json=[] if request.url.params.get("page", "1") == "1" else {"oops": 1},
+            headers={"X-Total-Pages": "2"},
+        )
+    )
+    with pytest.raises(GitLabResponseError, match="expected a list page"):
+        await client.paginate("things", parallel=True)
+
+
+@respx.mock
+async def test_an_epic_group_with_several_pages_continues_alone(client: GitLabClient) -> None:
+    def page(gid: int, more: bool) -> dict[str, object]:
+        node = {
+            "id": f"gid://gitlab/WorkItem/{gid}",
+            "iid": gid,
+            "title": "E",
+            "updatedAt": "2026-09-20T10:00:00Z",
+        }
+        info = {"hasNextPage": more, "endCursor": f"c{gid}"}
+        return {"workItems": {"nodes": [node], "pageInfo": info}}
+
+    answers = {
+        (None, "a"): {"g0": page(1, True), "g1": page(2, True)},
+        ("c1", "a"): {"g0": page(3, True)},  # a: second page
+        ("c2", "b"): {"g0": None},  # b: gone meanwhile
+        ("c3", "a"): {"g0": page(4, False)},  # a: last page
+    }
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        variables = json.loads(request.content)["variables"]
+        return httpx.Response(200, json={"data": answers[(variables["after"], variables["p0"])]})
+
+    route = respx.post(f"{BASE}/api/graphql").mock(side_effect=answer)
+    epics = await client.get_epics(["x"], {"a", "b"}, None)
+    assert sorted(e.gitlab_id for e in epics) == [1, 2, 3, 4]
+    cursors = [json.loads(c.request.content)["variables"]["after"] for c in route.calls]
+    assert sorted(cursors, key=str) == [None, "c1", "c2", "c3"]
