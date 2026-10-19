@@ -3,6 +3,12 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.5.1 (2026-10-19): clean shutdown during cleanup
+
+- Stopping the app while the hourly retention cleanup runs now waits for it (milliseconds)
+  instead of abandoning its worker thread, which kept a database connection open after
+  shutdown (seen as a ResourceWarning that failed the v0.5.0 CI run).
+
 ## 0.5.0 (2026-10-19): meeting summary, faster sync and dashboard
 
 - **Meeting summary**: a dashboard button builds, on demand only, one crisp block per person
