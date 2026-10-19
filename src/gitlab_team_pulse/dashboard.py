@@ -11,7 +11,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import Row, select
 from sqlalchemy.orm import Session
 
 from gitlab_team_pulse import __version__, store
@@ -197,7 +197,7 @@ ATTENTION_CODES = (
 )
 
 
-def merge_problems(item: WorkItemRecord) -> list[str]:
+def merge_problems(item: WorkItemRecord | Row[Any]) -> list[str]:
     """Why an open MR cannot be merged as it is, from fields GitLab Free provides."""
     if item.kind != "merge_request" or item.state not in OPEN_STATES:
         return []
@@ -218,7 +218,7 @@ def local_days(settings: Settings, now: datetime) -> list[date]:
 
 
 def _event_url(
-    event: ActivityEventRecord, projects: dict[int, Project], settings: Settings
+    event: ActivityEventRecord | Row[Any], projects: dict[int, Project], settings: Settings
 ) -> str | None:
     project = projects.get(event.project_id) if event.project_id is not None else None
     base = safe_url(project.web_url, settings) if project else None
@@ -246,15 +246,21 @@ class DashboardReader:
         return {state.key: state for state in rows}
 
     def work(self, user_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+        # Plain rows, not ORM objects: building hundreds of instances dominated this read.
         rows = self.session.execute(
-            select(WorkItemAssignee.user_id, WorkItemAssignee.relation, WorkItemRecord)
+            select(
+                WorkItemAssignee.user_id,
+                WorkItemAssignee.relation,
+                *WorkItemRecord.__table__.columns,
+            )
             .join(WorkItemRecord, WorkItemRecord.id == WorkItemAssignee.work_item_id)
             .where(WorkItemAssignee.user_id.in_(user_ids))
             .order_by(WorkItemRecord.updated_at.desc(), WorkItemRecord.id.desc())
         ).all()
-        projects = self._projects({r[2].project_id for r in rows if r[2].project_id is not None})
+        projects = self._projects({r.project_id for r in rows if r.project_id is not None})
         grouped: dict[int, dict[int, dict[str, Any]]] = defaultdict(dict)
-        for user_id, relation, item in rows:
+        for item in rows:
+            user_id, relation = item.user_id, item.relation
             existing = grouped[user_id].get(item.id)
             if existing is not None:
                 existing["relations"].append(relation)
@@ -292,7 +298,7 @@ class DashboardReader:
             }
         return {uid: list(items.values()) for uid, items in grouped.items()}
 
-    def stalled_days(self, item: WorkItemRecord) -> int | None:
+    def stalled_days(self, item: WorkItemRecord | Row[Any]) -> int | None:
         """Days without any update for open items past the threshold, else None."""
         if item.state not in OPEN_STATES:
             return None
@@ -449,18 +455,26 @@ class DashboardReader:
         ]
 
     def activity(self, user_ids: list[int]) -> dict[int, dict[str, Any]]:
-        events = list(
-            self.session.scalars(
-                select(ActivityEventRecord)
-                .where(ActivityEventRecord.user_id.in_(user_ids))
-                .order_by(ActivityEventRecord.occurred_at.desc(), ActivityEventRecord.id.desc())
-            )
+        events = self.session.execute(
+            select(*ActivityEventRecord.__table__.columns)
+            .where(ActivityEventRecord.user_id.in_(user_ids))
+            .order_by(ActivityEventRecord.occurred_at.desc(), ActivityEventRecord.id.desc())
+        ).all()
+        per_user: dict[int, list[Row[Any]]] = defaultdict(list)
+        for event in events:
+            per_user[event.user_id].append(event)
+        projects = self._projects(
+            {
+                e.project_id
+                for mine in per_user.values()
+                for e in mine[:RECENT_EVENTS]
+                if e.project_id is not None
+            }
         )
-        projects = self._projects({e.project_id for e in events if e.project_id is not None})
         days = local_days(self.settings, self.now)
         result: dict[int, dict[str, Any]] = {}
         for user_id in user_ids:
-            mine = [e for e in events if e.user_id == user_id]
+            mine = per_user.get(user_id, [])
             buckets = {day: dict.fromkeys(CATEGORIES, 0) for day in days}
             for event in mine:
                 day = event.occurred_at.astimezone(self.settings.tz).date()
@@ -496,12 +510,15 @@ class DashboardReader:
                 .order_by(TimelogRecord.spent_at.desc(), TimelogRecord.id.desc())
             )
         )
+        logs_by_user: dict[int, list[TimelogRecord]] = defaultdict(list)
+        for log in logs:
+            logs_by_user[log.user_id].append(log)
         result: dict[int, dict[str, Any]] = {}
         for user_id in user_ids:
             per_day = dict.fromkeys(days, 0)
             per_project: dict[str, int] = defaultdict(int)
             entries = []
-            for log in (t for t in logs if t.user_id == user_id):
+            for log in logs_by_user.get(user_id, []):
                 day = log.spent_at.astimezone(self.settings.tz).date()
                 if day not in per_day:
                     continue
