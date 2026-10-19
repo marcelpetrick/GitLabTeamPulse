@@ -52,7 +52,25 @@ class App {
     });
     setInterval(() => tickRelativeTimes(), 1000);
     document.addEventListener("visibilitychange", () => { if (!document.hidden) this.pollSoon(); });
+    // Start the first view's data and the teams together with the first status request
+    // instead of one after the other; a failed early fetch is simply repeated later.
+    const requested = this.requestedView();
+    this.prefetched = new Map([["teams", api.teams().catch(() => null)]]);
+    if (requested === "people") this.prefetched.set("users", api.users().catch(() => null));
+    else if (requested !== "teams") this.prefetched.set("dashboard", api.dashboard().catch(() => null));
     this.poll().then(() => this.route());
+  }
+
+  requestedView() {
+    const requested = window.location.hash.replace(/^#\/?/, "");
+    return VIEWS.includes(requested) ? requested : null;
+  }
+
+  /** The early fetch for ``key`` if there is one (used once), else a fresh request. */
+  async take(key, load) {
+    const early = this.prefetched?.get(key);
+    this.prefetched?.delete(key);
+    return (early && (await early)) || load();
   }
 
   setupTheme() {
@@ -71,8 +89,7 @@ class App {
   }
 
   route() {
-    const requested = window.location.hash.replace(/^#\/?/, "");
-    let view = VIEWS.includes(requested) ? requested : null;
+    let view = this.requestedView();
     if (!view) view = this.status && this.status.users.selected === 0 ? "people" : "dashboard";
     this.show(view);
   }
@@ -103,7 +120,7 @@ class App {
 
   async reloadTeams() {
     try {
-      this.teams = await api.teams();
+      this.teams = await this.take("teams", api.teams);
       this.teamsVersion = this.teams.teams_version;
       this.renderChrome();
       if (this.view === "teams" || this.view === "dashboard") this.renderView();
@@ -122,9 +139,12 @@ class App {
     const version = key === "users" ? this.usersVersion : this.dataVersion;
     if (!force && this.loadedVersion[key] === version && this[key]) return;
     try {
-      this[key] = key === "users" ? await api.users() : await api.dashboard();
-      this.loadedVersion[key] = version;
+      const payload = await this.take(key, key === "users" ? api.users : api.dashboard);
+      this[key] = payload;
+      // The payload's own version: an early fetch may be older than the latest status.
+      this.loadedVersion[key] = (key === "users" ? payload.users_version : payload.data_version) ?? version;
       this.renderView();
+      if (!force && this.loadedVersion[key] !== version) await this.loadViewData(true);
     } catch (error) {
       toast(`Could not load ${key}: ${error.message}`, "error");
     }

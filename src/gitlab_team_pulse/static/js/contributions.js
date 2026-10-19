@@ -30,8 +30,12 @@ function addDays(date, days) {
   return new Date(date.getTime() + days * 86400000);
 }
 
+// Created once: toLocaleDateString with options builds a new formatter on every call.
+const DAY_TEXT = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+const MONTH = new Intl.DateTimeFormat("en-GB", { month: "short", timeZone: "UTC" });
+
 function dayText(date) {
-  return date.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return DAY_TEXT.format(date);
 }
 
 /** Grid cells: week column, weekday row (0 = Sunday), date and count. */
@@ -69,7 +73,7 @@ export function heatmap(calendar) {
     if (cell.weekday === 0 && cell.date.getUTCMonth() !== lastMonth && cell.date.getUTCDate() <= 7) {
       lastMonth = cell.date.getUTCMonth();
       svg.append(s("text", { x: LEFT + cell.week * STEP, y: TOP - 6, class: "heat-label" },
-        cell.date.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" })));
+        MONTH.format(cell.date)));
     }
   }
   for (const row of [1, 3, 5]) {

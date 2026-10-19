@@ -40,27 +40,35 @@ export function shortDateTime(value) {
 }
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+// Formatters are expensive to create; toLocaleDateString with options builds one per call.
+const DATE_UTC = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+const DATE_LOCAL = new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+const WEEKDAY_UTC = new Intl.DateTimeFormat("en-GB", { weekday: "short", timeZone: "UTC" });
+const DAY_MONTH_UTC = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+const dayLabels = new Map();
 
 export function formatDate(value) {
   if (typeof value === "string" && DATE_ONLY.test(value)) {
     // A calendar day (due date, period bounds) has no time zone: never shift it by the
     // browser's offset (new Date("2026-10-15") is UTC midnight, the 14th west of UTC).
     const [y, m, d] = value.split("-").map(Number);
-    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+    return DATE_UTC.format(new Date(Date.UTC(y, m - 1, d)));
   }
   const d = toDate(value);
   if (!d) return "—";
-  return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+  return DATE_LOCAL.format(d);
 }
 
 /** "2026-09-22" -> { weekday: "Tue", day: "22 Sep" } without timezone shifting. */
 export function dayLabel(isoDate) {
-  const [y, m, d] = isoDate.split("-").map(Number);
-  const date = new Date(Date.UTC(y, m - 1, d));
-  return {
-    weekday: date.toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" }),
-    day: date.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" }),
-  };
+  let label = dayLabels.get(isoDate);
+  if (!label) {
+    const [y, m, d] = isoDate.split("-").map(Number);
+    const date = new Date(Date.UTC(y, m - 1, d));
+    label = Object.freeze({ weekday: WEEKDAY_UTC.format(date), day: DAY_MONTH_UTC.format(date) });
+    dayLabels.set(isoDate, label);
+  }
+  return label;
 }
 
 export function formatDuration(seconds) {

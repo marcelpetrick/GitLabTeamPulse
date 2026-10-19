@@ -21,17 +21,36 @@ function niceMax(value, minimum) {
   return steps.find((step) => step >= target) || Math.ceil(target / 100) * 100;
 }
 
+// One observer for every chart. It reports each width after layout, so no chart forces an
+// extra layout by reading clientWidth, and each chart is drawn once at its real width.
+const drawers = new WeakMap();
+const resizer = "ResizeObserver" in window
+  ? new ResizeObserver((entries) => {
+    const sizes = entries.map((entry) => [entry.target, entry.contentRect.width]);
+    for (const [container, width] of sizes) {
+      if (!container.isConnected) {
+        resizer.unobserve(container); // a re-rendered dashboard dropped this chart
+        continue;
+      }
+      drawers.get(container)?.(width);
+    }
+  })
+  : null;
+
 function observe(container, draw) {
   let lastWidth = 0;
-  const render = () => {
-    const width = Math.max(220, Math.floor(container.clientWidth || 320));
+  const render = (measured) => {
+    const width = Math.max(220, Math.floor(measured || 320));
     if (width === lastWidth) return;
     lastWidth = width;
     container.replaceChildren(draw(width));
   };
-  if ("ResizeObserver" in window) new ResizeObserver(render).observe(container);
-  requestAnimationFrame(render);
-  container.append(draw(Math.max(220, container.clientWidth || 320)));
+  if (resizer) {
+    drawers.set(container, render);
+    resizer.observe(container);
+  } else {
+    requestAnimationFrame(() => render(container.clientWidth));
+  }
 }
 
 function frame(width, days, today, max, valueOf, labelOf, drawBar, describe, tooltipRows) {
