@@ -58,7 +58,10 @@ class App {
     this.prefetched = new Map([["teams", api.teams().catch(() => null)]]);
     if (requested === "people") this.prefetched.set("users", api.users().catch(() => null));
     else if (requested !== "teams") this.prefetched.set("dashboard", api.dashboard().catch(() => null));
-    this.poll().then(() => this.route());
+    this.poll().then(() => {
+      this.route(); // takes the early fetch it needs synchronously
+      this.prefetched = null; // any other early fetch would be stale by the time it is used
+    });
   }
 
   requestedView() {
