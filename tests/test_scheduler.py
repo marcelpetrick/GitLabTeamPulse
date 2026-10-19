@@ -202,3 +202,26 @@ async def test_refresh_during_a_single_user_run_is_queued_not_dropped(
     assert scheduler.is_running("selected")
     assert scheduler.request_refresh().status == "coalesced"
     await scheduler.wait_idle()
+
+
+async def test_stop_waits_for_a_running_cleanup_thread(
+    service: SyncService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+    import time
+
+    started, finished = threading.Event(), threading.Event()
+
+    def slow_cleanup() -> str:
+        started.set()
+        time.sleep(0.2)  # still running when the app shuts down
+        finished.set()
+        return "ok"
+
+    monkeypatch.setattr(service, "cleanup", slow_cleanup)
+    scheduler = Scheduler(service)
+    scheduler.start()
+    assert await asyncio.to_thread(started.wait, 5)
+    await scheduler.stop()
+    assert finished.is_set()  # the thread no longer outlives the scheduler (and the engine)
+    assert not scheduler.is_running("cleanup")

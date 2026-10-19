@@ -50,9 +50,14 @@ class Scheduler:
             log.info("scheduler started")
 
     async def stop(self) -> None:
+        # Cleanup runs in a worker thread that a cancel cannot stop: wait for it (it takes
+        # milliseconds), or it would go on using the database after the engine is disposed
+        # and leave its connection unclosed.
+        cleanup = self._jobs.get("cleanup")
         tasks = [t for t in [self._task, *self._jobs.values()] if t is not None]
         for task in tasks:
-            task.cancel()
+            if task is not cleanup:
+                task.cancel()
         for task in tasks:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
