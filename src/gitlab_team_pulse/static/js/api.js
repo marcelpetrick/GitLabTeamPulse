@@ -49,4 +49,5 @@ export const api = {
   teamReport: (id, period, offset) => request("GET", `/api/teams/${encodeURIComponent(id)}/report?period=${encodeURIComponent(period)}&offset=${encodeURIComponent(offset)}`),
   teamDigest: (id) => request("GET", `/api/teams/${encodeURIComponent(id)}/digest`),
   projects: () => request("GET", "/api/projects"),
+  meetingSummary: (userIds, days) => request("GET", `/api/meeting-summary?user_ids=${encodeURIComponent(userIds.join(","))}&days=${encodeURIComponent(days)}`),
 };

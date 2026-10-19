@@ -93,6 +93,13 @@ def main() -> None:
                 page.wait_for_timeout(300)
                 page.screenshot(path=OUT / "about.png")
                 page.keyboard.press("Escape")
+                page.click("#tab-dashboard")
+                page.click("#open-meeting")
+                page.click("#meeting-generate")
+                page.wait_for_selector("#meeting .meeting-person-block")
+                page.wait_for_timeout(300)
+                page.locator("#meeting").screenshot(path=OUT / "meeting-summary.png")
+                page.keyboard.press("Escape")
                 page = browser.new_page(
                     viewport={"width": 1440, "height": 900}, color_scheme="light"
                 )

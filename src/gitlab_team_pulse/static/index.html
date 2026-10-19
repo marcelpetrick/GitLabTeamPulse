@@ -87,6 +87,17 @@
     <div class="about-body" id="about-body"></div>
   </dialog>
 
+  <dialog id="meeting" class="about-dialog meeting-dialog" aria-labelledby="meeting-title">
+    <div class="about-head">
+      <h2 id="meeting-title">Meeting summary</h2>
+      <button type="button" class="icon-button" id="close-meeting" title="Close the meeting summary">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        <span class="visually-hidden">Close meeting summary</span>
+      </button>
+    </div>
+    <div class="about-body" id="meeting-body"></div>
+  </dialog>
+
   <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
   <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
   <noscript><p class="noscript">GitLab Team Pulse needs JavaScript enabled.</p></noscript>

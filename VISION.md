@@ -140,6 +140,15 @@ Freshness, crawler state, errors, and useful logs must be visible without attach
 
 One Python application and one SQLite database are sufficient for the prototype.
 
+### 5.9 Meeting summary: outcomes, not hours (amended 2026-10-19)
+
+The meeting summary states the real outcome of each person's work in a period: delivered items
+first, then whom the work unblocked, what is next and what needs a decision. It is built only on
+request, from cached GitLab facts with fixed, documented rules and no language model. Items are
+ordered by facts about the item (priority, incident or bug, milestone, due date, size, age); the
+order never compares people, no score is shown, and logged hours are context only. When GitLab
+has nothing for a person, the summary says so without judgment.
+
 ---
 
 ## 6. Target Users and Usage Pattern

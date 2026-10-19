@@ -4,6 +4,7 @@
 import { AboutDialog } from "./js/about.js";
 import { api } from "./js/api.js";
 import { DashboardView } from "./js/dashboard.js";
+import { MeetingDialog } from "./js/meeting.js";
 import { Diagnostics } from "./js/diagnostics.js";
 import { PeopleView } from "./js/people.js";
 import { renderStatusbar } from "./js/statusbar.js";
@@ -32,6 +33,7 @@ class App {
     this.teamsView = new TeamsView(document.getElementById("view-teams"), this);
     this.diagnostics = new Diagnostics(this);
     this.about = new AboutDialog();
+    this.meeting = new MeetingDialog(this);
   }
 
   start() {

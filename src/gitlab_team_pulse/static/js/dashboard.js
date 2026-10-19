@@ -140,6 +140,11 @@ export class DashboardView {
       h("div", { class: "toolbar" },
         selected ? freshnessPill(selected, { label: "Selected users data" }) : null,
         this.teamSelect(),
+        data && data.cards.length ? h("button", {
+          type: "button", class: "button", id: "open-meeting", "aria-haspopup": "dialog",
+          title: "Meeting summary: the real outcome per person (delivered, unblocked, next, decisions), built on demand",
+          onclick: () => this.app.meeting.open(),
+        }, icon("check"), "Meeting summary") : null,
         this.refreshButton));
     const nodes = [head];
     if (selected && (selected.status === "error" || selected.status === "stale" || (selected.status === "refreshing" && selected.stale))) {

@@ -27,6 +27,20 @@ All of this works on GitLab Free (see [steering signals](docs/features/steering-
 
 ![Dashboard (light)](docs/media/dashboard-light.png)
 
+### New in 0.5: meeting summary
+
+**Meeting summary.** One button on the dashboard builds a crisp summary per person for a
+stand-up, weekly or sprint meeting: what was **delivered** (issues closed, MRs merged, ordered
+by priority, incidents and bug fixes, milestone, due date, size and age, each with the reason
+why it matters), whom it **unblocked** (colleagues' MRs reviewed and merged), what is **next**
+and what **needs a decision** (overdue, stalled, cannot merge). Without delivery it falls back
+to unblocked others, work in progress, discussion and finally the last delivery. Logged hours
+are only context. Plain rules over GitLab facts, no AI; built on demand, never on polling;
+*Copy as Markdown* for chat or notes. See
+[`docs/features/meeting-summary.md`](docs/features/meeting-summary.md).
+
+![Meeting summary](docs/media/meeting-summary.png)
+
 ### New in 0.4: steering signals and teams
 
 **Needs attention.** One list across everyone on the dashboard: stalled work (no update for a
@@ -259,6 +273,7 @@ FastAPI app (single worker) ── security headers (CSP, no CORS), cached reads
 | `retention.py` | Rolling cleanup that never removes the only good snapshot |
 | `dashboard.py`, `app.py` | Batched read model (no N+1 queries), attention list and HTTP API |
 | `teams.py` | Team payloads, team reports from the history aggregates, weekly digest |
+| `meeting.py` | On-demand meeting summary: delivered, unblocked, next, decisions, Markdown |
 | `fake_gitlab.py` | Deterministic fake GitLab for demo, integration and browser tests |
 
 HTTP API: `GET /api/health`, `/api/status`, `/api/users`, `/api/dashboard`,
@@ -266,7 +281,8 @@ HTTP API: `GET /api/health`, `/api/status`, `/api/users`, `/api/dashboard`,
 `PATCH /api/users/{id}/selection`, `POST /api/refresh` (202 or 429 with `Retry-After`),
 `GET|POST /api/teams`, `PUT|DELETE /api/teams/{id}`, `POST /api/teams/{id}/apply`,
 `GET /api/teams/{id}/report?period=week|month|quarter&offset=N` and
-`GET /api/teams/{id}/digest` and `GET /api/about`. Interactive docs are at `/api/docs`.
+`GET /api/teams/{id}/digest`, `GET /api/meeting-summary?user_ids=1,2&days=7` and
+`GET /api/about`. Interactive docs are at `/api/docs`.
 
 Why and how GitLab's GraphQL API is used (timelogs and epics) and what it saves compared
 with REST is explained in [`docs/GRAPHQL.md`](docs/GRAPHQL.md).
@@ -317,6 +333,8 @@ appended, e.g. `feat(docker): … (v0.1.0)`. See [`CHANGELOG.md`](CHANGELOG.md).
   browser on real data, and what was changed or decided because of it.
 - [`docs/features/steering-signals.md`](docs/features/steering-signals.md): needs attention,
   milestones, teams and team reports: rules, counting, GitLab Free workarounds and load.
+- [`docs/features/meeting-summary.md`](docs/features/meeting-summary.md): the meeting summary:
+  levels, fallbacks, item order and what is deliberately not done.
 - [`ideas20261015.md`](ideas20261015.md) and [`plan.md`](plan.md): the reviewed feature ideas
   and the implementation plan behind v0.4.0.
 - [`CHANGELOG.md`](CHANGELOG.md): release history.

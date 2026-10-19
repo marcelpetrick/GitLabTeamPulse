@@ -113,6 +113,7 @@ flowchart TB
             routes["<b>API router</b><br/>[Component: app.py]<br/>health, status, users, selection,<br/>dashboard, teams, errors, refresh"]
             reader["<b>Read model</b><br/>[Component: dashboard.py]<br/>batched queries, attention list,<br/>milestones, URL sanitizing"]
             teams["<b>Team reports</b><br/>[Component: teams.py]<br/>periods, scope, deltas,<br/>knowledge spread, digest"]
+            meet["<b>Meeting summary</b><br/>[Component: meeting.py]<br/>on demand: delivered, unblocked,<br/>next, decisions, Markdown"]
             fresh["<b>Freshness classifier</b><br/>[Component: freshness.py]<br/>fresh / refreshing / stale / error / never"]
         end
         subgraph bg["Background side: talks to GitLab"]
@@ -132,6 +133,9 @@ flowchart TB
     routes --> reader
     routes --> teams
     teams -->|reads aggregates| db
+    routes --> meet
+    meet -->|"attention rules"| reader
+    meet -->|reads cache and history| db
     reader --> fresh
     routes -->|"request_refresh,<br/>request_user_sync"| sched
     sched -->|runs jobs| sync

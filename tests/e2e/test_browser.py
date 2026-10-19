@@ -411,6 +411,12 @@ def test_every_control_and_figure_has_a_tooltip(page: Page, stack: LiveStack) ->
     expect(page.locator("#about .about-deps tbody tr").first).to_be_visible()
     missing["about"] = missing_tooltips(page)
     page.keyboard.press("Escape")
+    page.click("#open-meeting")
+    page.click("#meeting-generate")
+    expect(page.locator("#meeting .meeting-person-block").first).to_be_visible(timeout=30000)
+    page.locator("#meeting .meeting-rules summary").click()
+    missing["meeting summary"] = missing_tooltips(page)
+    page.keyboard.press("Escape")
     page.click("#tab-people")
     expect(page.locator(".people-row[data-user-id]").first).to_be_visible()
     missing["people"] = missing_tooltips(page)
@@ -431,3 +437,53 @@ def test_every_control_and_figure_has_a_tooltip(page: Page, stack: LiveStack) ->
     report = {view: found for view, found in missing.items() if found}
     lines = [f"{view}: {item}" for view, found in report.items() for item in found]
     assert report == {}, "\n".join(lines)
+
+
+def test_meeting_summary_is_built_on_demand_only(page: Page, stack: LiveStack) -> None:
+    select_alex(page, stack)
+    page.click("#tab-dashboard")
+    expect(page.locator("article.card .work-table")).to_be_visible(timeout=30000)
+    requests: list[str] = []
+    page.on(
+        "request",
+        lambda r: requests.append(r.url) if "/api/meeting-summary" in r.url else None,
+    )
+    page.click("#open-meeting")
+    dialog = page.locator("#meeting")
+    expect(dialog).to_be_visible()
+    expect(dialog.locator(".meeting-intro")).to_be_visible()
+    assert requests == []  # opening alone builds nothing
+    expect(dialog.locator(f'input[data-user="{ALEX}"]')).to_be_checked()
+    page.select_option("#meeting-days", "30")
+    page.click("#meeting-generate")
+    block = dialog.locator(f'.meeting-person-block[data-user="{ALEX}"]')
+    expect(block).to_be_visible(timeout=30000)
+    expect(block.locator(".meeting-headline")).not_to_be_empty()
+    expect(block.locator(".badge")).to_have_text(
+        re.compile(r"Delivered|Unblocked others|In progress|Discussion|Last delivery|Nothing")
+    )
+    assert len(requests) == 1
+    assert "days=30" in requests[0]
+    assert f"user_ids={ALEX}" in requests[0]
+    meta = dialog.locator("#meeting-meta").inner_text()
+    # New data and polling do not touch the summary: it is rebuilt only on request.
+    stack.control("activity", user_id=ALEX)
+    page.evaluate("() => fetch('/api/refresh', { method: 'POST' })")
+    page.wait_for_timeout(3000)  # several polls and a finished refresh
+    assert len(requests) == 1
+    assert dialog.locator("#meeting-meta").inner_text().split(" · ")[0] == meta.split(" · ")[0]
+    expect(page.locator("#meeting-generate")).to_have_text(re.compile("Regenerate"))
+    page.click("#meeting-generate")
+    expect(block).to_be_visible()
+    page.wait_for_function("() => !document.querySelector('#meeting-generate').disabled")
+    assert len(requests) == 2
+    page.click("#meeting-copy")
+    expect(page.locator("#toasts")).to_contain_text(re.compile("Copied|clipboard"))
+    page.keyboard.press("Escape")
+    expect(dialog).to_be_hidden()
+    # Unticking everyone is refused without a request.
+    page.click("#open-meeting")
+    dialog.locator(f'input[data-user="{ALEX}"]').uncheck()
+    page.click("#meeting-generate")
+    expect(page.locator("#toasts")).to_contain_text("Choose at least one person")
+    assert len(requests) == 2

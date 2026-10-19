@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from gitlab_team_pulse import __version__, about, dashboard, db, store, teams
+from gitlab_team_pulse import __version__, about, dashboard, db, meeting, store, teams
 from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.logging_setup import configure_logging, get_logger
 from gitlab_team_pulse.models import Project, Team, User
@@ -262,6 +262,40 @@ def api_router() -> APIRouter:
     def user_time(request: Request, user_id: int) -> dict[str, Any]:
         card = one_card(request, user_id)
         return {"user": card["user"], "freshness": card["freshness"], **card["time"]}
+
+    @router.get("/meeting-summary")
+    def meeting_summary(
+        request: Request,
+        user_ids: str | None = Query(
+            default=None, max_length=1000, description="Comma-separated user IDs"
+        ),
+        days: int = Query(default=7, ge=1, le=meeting.MAX_DAYS),
+    ) -> dict[str, Any]:
+        """The real outcome per person over the last ``days`` local days, built on demand from
+        the cache (default people: the dashboard selection, in its order)."""
+        context = ctx(request)
+        try:
+            wanted = [int(part) for part in (user_ids or "").split(",") if part.strip()]
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="user_ids must be numbers") from exc
+        if len(wanted) > meeting.MAX_PEOPLE:
+            raise HTTPException(
+                status_code=422, detail=f"At most {meeting.MAX_PEOPLE} people per summary"
+            )
+        with context.session_factory() as session:
+            if user_ids is None:
+                people = store.selected_users(session)
+            else:
+                found = {u.id: u for u in session.scalars(select(User).where(User.id.in_(wanted)))}
+                if missing := [uid for uid in wanted if uid not in found]:
+                    raise HTTPException(
+                        status_code=404, detail=f"Unknown users: {', '.join(map(str, missing))}"
+                    )
+                people = [found[uid] for uid in dict.fromkeys(wanted)]
+            builder = meeting.MeetingSummary(
+                session, context.settings, context.service.runtime, context.service.clock()
+            )
+            return builder.build(people, days)
 
     @router.get("/errors")
     def errors(
