@@ -1,3 +1,68 @@
+# Plan — v0.5.0: meeting summary, profiling and speed-ups, E2E
+
+**Status: in progress (branch `feature/meeting-summary`), started 2026-10-19.**
+
+Requested 2026-10-19: idea 10 ("meeting mode") as a crisp, on-demand **meeting summary** that
+states the real outcome of each person's work, not the hours burned; computed directly from the
+local cache with plain Python rules, no language model. Plus a profiling run over the whole setup
+with fixes for the bottlenecks found, and working end-to-end tests.
+
+## A. Meeting summary (`meeting.py`, `GET /api/meeting-summary`)
+
+- **On demand only.** Built when the user presses *Generate* in the *Meeting summary* dialog, for
+  the people ticked there (default: everyone on the dashboard) and a period (yesterday and today,
+  7, 14 or 30 days). The dialog never refetches on polling; it shows when it was generated and how
+  fresh the data was, and has *Regenerate*. The endpoint only reads SQLite; it never triggers a
+  crawl.
+- **What counts as value**, per person, in this order (the first non-empty level becomes the
+  headline; everything is a GitLab fact):
+  1. **Delivered**: issues closed and MRs merged in the period (work cache and stored outcomes,
+     each item once; an MR whose title names an issue of the same project is folded into that
+     issue as "via !N").
+  2. **Unblocked others**: MRs of colleagues this person reviewed that got merged in the period;
+     approvals and review comments given.
+  3. **In progress**: MRs opened or in review, open assigned items worked on in the period (time
+     logged or updated).
+  4. **Discussion and triage**: issues opened, comments.
+  5. **Last delivery**: nothing above in the period: the most recent delivery within 90 days, with
+     its date.
+  6. **Nothing recorded in GitLab**: said plainly, without judgment (absence or work outside
+     GitLab are possible).
+- **Ranking items, never people.** Delivered items are ordered by a documented item weight:
+  priority label (Prio/priority 1/high/critical), incident or bug fix, feature, milestone (and its
+  due date), done on or before the due date, done although overdue ("overcame": late but done),
+  size (time spent or estimated), age (an issue open for months), linked issue + MR. The weight is
+  never shown as a number; each item shows the reasons as short chips. People are listed in the
+  order chosen in the dialog (alphabetical by default). No totals per person are compared.
+- **Crisp output**: one headline sentence per person, up to five delivered items with reasons, up
+  to three "unblocked", "next" and "needs a decision" lines (overdue, stalled, cannot merge,
+  waiting for review), and hours logged only as context at the end. *Copy as Markdown* for chat or
+  meeting notes.
+
+## B. Profiling and speed-ups
+
+- Profile with `cProfile` and timing: a selected-users sync against the fake GitLab with added
+  latency, the history categories, `GET /api/dashboard` with many monitored people, the team
+  report, retention and the new summary. Record numbers before and after in
+  `docs/features/performance.md`.
+- Fix what dominates: per-user list scans in the read model (O(users × rows)), sequential GitLab
+  requests that can run concurrently within the existing concurrency bound, missing indexes for hot
+  queries (new migration if needed).
+
+## C. End-to-end tests
+
+- Playwright test for the meeting summary dialog (open, choose people, generate, copy, no
+  refetch on polling, tooltips on every control); full E2E suite green.
+
+## D. Delivery
+
+- Docs: README (feature, API), `docs/features/meeting-summary.md`, ARCHITECTURE (component),
+  VISION (meeting summary is factual and item-based), CHANGELOG; screenshots regenerated.
+- Pipeline green, `/reviewBranch`, fix all findings, pipeline again, fast-forward merge, tag
+  **v0.5.0** (new feature → minor bump), push, GitHub release, CI green.
+
+---
+
 # Plan — steering signals, teams and team reports (v0.4.0)
 
 **Status: done, released as v0.4.0 on 2026-10-15.**
