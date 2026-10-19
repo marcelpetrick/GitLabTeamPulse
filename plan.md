@@ -1,6 +1,6 @@
 # Plan — v0.5.0: meeting summary, profiling and speed-ups, E2E
 
-**Status: in progress (branch `feature/meeting-summary`), started 2026-10-19.**
+**Status: done, released as v0.5.0 on 2026-10-19.**
 
 Requested 2026-10-19: idea 10 ("meeting mode") as a crisp, on-demand **meeting summary** that
 states the real outcome of each person's work, not the hours burned; computed directly from the

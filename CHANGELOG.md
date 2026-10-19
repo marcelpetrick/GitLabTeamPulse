@@ -3,6 +3,27 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.5.0 (2026-10-19): meeting summary, faster sync and dashboard
+
+- **Meeting summary**: a dashboard button builds, on demand only, one crisp block per person
+  for a stand-up, weekly, sprint or monthly meeting: what was **delivered** (issues closed,
+  MRs merged, an MR shown with the issue it delivers), ordered by facts about the item
+  (priority, incident, security or bug fix, customer, feature, milestone, due date, size, age)
+  with the reasons as chips; colleagues' MRs it **unblocked**; what is **next**; what **needs
+  a decision**. Without delivery it falls back to unblocked others, work in progress,
+  discussion and the last delivery, or says plainly that GitLab has nothing. Hours are context
+  only. Plain rules, no AI, no extra GitLab requests; *Copy as Markdown*;
+  `GET /api/meeting-summary`. See `docs/features/meeting-summary.md`.
+- **Faster sync, less GitLab load** (profiled against the production GitLab): the epics of all
+  people share one GraphQL request per five groups, personal namespaces are skipped for a day,
+  and the directory loads its pages in parallel. Regular sync 197 → 85 requests and
+  14.5 → about 9 s; hourly run 250 → 138 requests.
+- **Faster dashboard**: the read model uses plain rows (−25%); in the browser charts are drawn
+  once without forced layouts, date formatters are reused and the first view's data is
+  fetched together with the status: render 39 → 20 ms, cards visible 164 → 118 ms.
+- Fixed a test that failed when run after about 20:00 UTC (the clock crossed midnight).
+- Details and numbers: `docs/PERFORMANCE.md`.
+
 ## 0.4.5 (2026-10-19): dependency update, GitLab 19.5 checked
 
 - Dependencies: fastapi 0.146.0, sqlalchemy 2.1.5, httpx2 2.14.0, ruff 0.17.1.
