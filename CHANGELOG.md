@@ -3,6 +3,13 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.4.5 (2026-10-19): dependency update, GitLab 19.5 checked
+
+- Dependencies: fastapi 0.146.0, sqlalchemy 2.1.5, httpx2 2.14.0, ruff 0.17.1.
+- GitLab 19.5 compatibility: its only removal (the `secretPermissionUpdate` and
+  `secretPermissionDelete` mutations) does not affect this read-only tool, and no REST field,
+  GraphQL field or argument we use is removed. Verified against a live 19.5.0 instance.
+
 ## 0.4.4 (2026-10-15): lighter epic sync
 
 - Epics come from two small GraphQL queries per top-level group (recently updated, and open
