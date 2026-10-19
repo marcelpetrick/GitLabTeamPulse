@@ -58,6 +58,11 @@ def _top_group(reference: str) -> str:
     return reference.split("&", 1)[0].split("/", 1)[0]
 
 
+def _rejects_schema(error: GitLabError) -> bool:
+    """GitLab refused the query itself (unknown argument or field), not a passing problem."""
+    return isinstance(error, GitLabCapabilityError) or "accept argument" in str(error)
+
+
 def contribution_grid_start(today: date) -> date:
     """First day of the 53-week calendar grid: a Sunday, as on GitLab profiles."""
     start = today - timedelta(weeks=CONTRIBUTION_WEEKS - 1)
@@ -651,13 +656,15 @@ class SyncService:
         if failure is not None:
             if self.runtime.epics_batch or not isinstance(failure, GitLabError):
                 raise failure
-            # Before the shared query ever worked, a rejection may be about the ``or`` filter:
-            # ask for this person alone. If that works, stop sharing for this process.
+            # Before the shared query ever worked: ask for this person alone. Only a schema
+            # rejection (the ``or`` filter) stops sharing for the process; anything else, such
+            # as a busy server, is retried shared on the next run.
             found = await client.get_user_epics(
                 username, groups, updated_after, open_only=open_only
             )
-            self.runtime.epics_batch = False
-            log.info("shared epic query not supported, asking per person: %s", failure)
+            if _rejects_schema(failure):
+                self.runtime.epics_batch = False
+                log.info("shared epic query not supported, asking per person: %s", failure)
             return found
         self.runtime.epics_batch = True
         return [

@@ -633,3 +633,28 @@ async def test_epics_without_a_running_batch_are_asked_per_person(
     epics = await service._group_epics(service.client(), "alex.berger", {"platform"}, None)
     assert all("username" in q for q in fake_app.state.epic_queries)
     assert {e.reference for e in epics} <= {e["reference"] for e in fake_app.state.data.epics}
+
+
+async def test_a_transient_failure_of_the_first_shared_epic_query_keeps_sharing(
+    service: SyncService,
+    session_factory: sessionmaker[Session],
+    fake_app: FastAPI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gitlab_team_pulse.gitlab.errors import GitLabUnavailableError
+
+    await select_users(service, session_factory, *epic_owner_ids(fake_app))
+    client = service.client()
+    shared = client.get_epics
+    failures = iter([GitLabUnavailableError("graphql: server error (502)")])
+
+    async def flaky(usernames: list[str], *args: object, **kwargs: object) -> object:
+        if len(usernames) > 1 and (error := next(failures, None)) is not None:
+            raise error
+        return await shared(usernames, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(client, "get_epics", flaky)
+    assert await service.sync_selected("scheduled") == "ok"
+    with session_factory() as session:
+        assert count(session, WorkItemRecord, kind="epic") == len(fake_app.state.data.epics)
+    assert service.runtime.epics_batch is not False  # not mistaken for a missing feature
