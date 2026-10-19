@@ -141,10 +141,13 @@ async def test_cursor_from_before_the_history_revision_backfills_once(
     backfill_after = (start - timedelta(days=2)).isoformat()
     queries = [q for p, q in fake_app.state.request_log if p.endswith("/events")]
     assert any(f"after={backfill_after}" in q for q in queries)
+    with session_factory() as session:
+        # The last counted (local) day, not "today": the clock may cross midnight meanwhile.
+        counted = store.get_state(session, "contributions", ALEX).cursor.partition("@")[0]
     clock.advance(hours=2)
     fake_app.state.request_log.clear()
     await service.sync_selected("scheduled")
-    incremental_after = (clock.now.date() - timedelta(days=3)).isoformat()
+    incremental_after = (date.fromisoformat(counted) - timedelta(days=3)).isoformat()
     queries = [q for p, q in fake_app.state.request_log if p.endswith("/events")]
     assert any(f"after={incremental_after}" in q for q in queries)
 
