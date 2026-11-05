@@ -3,6 +3,12 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.5.2 (2026-11-05): refresh dependencies
+
+- Update the Python runtime, development, and build dependency pins.
+- Update uv and GitHub Actions used by the CI and container builds.
+- Refresh the locked dependency graph and verify the full quality gate.
+
 ## 0.5.1 (2026-10-19): clean shutdown during cleanup
 
 - Stopping the app while the hourly retention cleanup runs now waits for it (milliseconds)
