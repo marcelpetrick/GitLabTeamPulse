@@ -22,6 +22,7 @@ from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.freshness import FAILED_STATUSES
 from gitlab_team_pulse.gitlab.client import GitLabClient
 from gitlab_team_pulse.gitlab.errors import (
+    GitLabAuthError,
     GitLabCapabilityError,
     GitLabError,
     GitLabForbiddenError,
@@ -79,6 +80,7 @@ EPICS_UNAVAILABLE = (
     "Epics are not available from this GitLab (GraphQL work items with type EPIC); "
     "issues and merge requests are still shown"
 )
+EPICS_KEPT = "Epics could not be read this time; the last known epics are shown"
 EPICS_RECHECK = timedelta(hours=1)
 INCOMPLETE_DIRECTORY = (
     "The token user is not an administrator: GitLab may hide blocked, deactivated or "
@@ -124,6 +126,7 @@ class RuntimeState:
     epics_failing_since: datetime | None = None
     epics_open_filter: bool | None = None  # does GitLab accept the open-only epic query?
     epics_batch: bool | None = None  # does GitLab accept one epic query for several people?
+    epics_read_failing: bool = False  # a passing epic failure has an open diagnostic
 
 
 @dataclass
@@ -588,10 +591,30 @@ class SyncService:
                 session.commit()
             log.info("epics unavailable: %s", exc)
             return []
-        if self.runtime.epics != "available":
+        except GitLabAuthError:
+            raise  # the token is bad: the whole dataset fails fast
+        except GitLabError as exc:
+            # A passing problem (timeout, rate limit, 5xx inside GraphQL) of the optional epic
+            # query: keep the stored epics; issues and merge requests still refresh.
+            log.warning("epics could not be read, keeping stored epics: %s", exc)
+            self.runtime.epics_read_failing = True
+            with self.session_factory() as session:
+                store.record_error(
+                    session,
+                    subsystem="sync",
+                    operation="epics_read",
+                    message=f"{EPICS_KEPT} ({exc})",
+                    severity="warning",
+                    now=now,
+                )
+                session.commit()
+            return None
+        if self.runtime.epics != "available" or self.runtime.epics_read_failing:
             with self.session_factory() as session:
                 store.resolve_errors(session, subsystem="sync", operation="epics", now=now)
+                store.resolve_errors(session, subsystem="sync", operation="epics_read", now=now)
                 session.commit()
+            self.runtime.epics_read_failing = False
         self.runtime.epics = "available"
         self.runtime.epics_checked_at = now
         self.runtime.epics_failing_since = None

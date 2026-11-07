@@ -13,6 +13,7 @@ from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.fake_gitlab import add_event
 from gitlab_team_pulse.models import (
     ActivityEventRecord,
+    ErrorRecord,
     Project,
     TimelogRecord,
     User,
@@ -406,11 +407,27 @@ async def test_transient_graphql_error_keeps_last_known_good_epics(
     assert epic_count() == 1
     fake_app.state.graphql_error = "Internal server error"  # transient, not a capability gap
     clock.advance(minutes=10)
-    assert await service.sync_selected("scheduled") == "partial"
+    # Epics are optional: issues and merge requests still refresh, the epics stay as they were.
+    assert await service.sync_selected("scheduled") == "partial"  # timelogs use GraphQL too
     assert epic_count() == 1
     assert service.runtime.epics == "available"
     with session_factory() as session:
-        assert store.get_state(session, "work", ALEX).status == "error"
+        assert store.get_state(session, "work", ALEX).status == "ok"
+        warning = session.scalars(
+            select(ErrorRecord).where(
+                ErrorRecord.operation == "epics_read", ErrorRecord.resolved_at.is_(None)
+            )
+        ).one()
+        assert warning.severity == "warning"
+    fake_app.state.graphql_error = None
+    clock.advance(minutes=10)
+    assert await service.sync_selected("scheduled") == "ok"
+    with session_factory() as session:
+        assert not session.scalars(
+            select(ErrorRecord).where(
+                ErrorRecord.operation == "epics_read", ErrorRecord.resolved_at.is_(None)
+            )
+        ).all()
 
 
 async def test_epics_that_worked_before_are_kept_while_work_still_refreshes(
@@ -550,12 +567,12 @@ async def test_state_filter_failing_after_it_worked_keeps_stored_epics(
     assert before
     fake_app.state.epic_state_filter = False  # e.g. a transient server-side problem
     clock.advance(minutes=10)
-    assert await service.sync_selected("scheduled") == "partial"  # work keeps last good data
+    assert await service.sync_selected("scheduled") == "ok"  # the epics keep last good data
     with session_factory() as session:
         after = set(
             session.scalars(select(WorkItemRecord.reference).where(WorkItemRecord.kind == "epic"))
         )
-        assert store.get_state(session, "work", ALEX).status == "error"
+        assert store.get_state(session, "work", ALEX).status == "ok"
     assert after == before
     assert service.runtime.epics_open_filter is True
 
@@ -620,7 +637,7 @@ async def test_shared_epic_query_failing_after_it_worked_keeps_stored_epics(
     assert service.runtime.epics_batch is True
     fake_app.state.epic_or_filter = False  # e.g. a transient server-side problem
     clock.advance(minutes=10)
-    assert await service.sync_selected("scheduled") == "partial"
+    assert await service.sync_selected("scheduled") == "ok"  # work refreshes, epics are kept
     with session_factory() as session:
         assert count(session, WorkItemRecord, kind="epic") == len(fake_app.state.data.epics)
     assert service.runtime.epics_batch is True
@@ -658,3 +675,21 @@ async def test_a_transient_failure_of_the_first_shared_epic_query_keeps_sharing(
     with session_factory() as session:
         assert count(session, WorkItemRecord, kind="epic") == len(fake_app.state.data.epics)
     assert service.runtime.epics_batch is not False  # not mistaken for a missing feature
+
+
+async def test_an_auth_failure_of_the_epic_query_still_fails_the_work_dataset(
+    service: SyncService,
+    session_factory: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gitlab_team_pulse.gitlab.errors import GitLabAuthError
+
+    await select_users(service, session_factory, ALEX)
+
+    async def refused(*_args: object, **_kwargs: object) -> list[object]:
+        raise GitLabAuthError("graphql: authentication failed (401)", status=401)
+
+    monkeypatch.setattr(service.client(), "get_user_epics", refused)
+    await service.sync_selected("scheduled")
+    with session_factory() as session:
+        assert store.get_state(session, "work", ALEX).status == "error"
