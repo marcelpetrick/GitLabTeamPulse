@@ -101,7 +101,10 @@ flowchart TB
 
 The web application and the synchronization run in **one process**. That is why deployments
 use a single worker: several workers would start several schedulers against the same database
-(VISION §21.5, §44.1).
+(VISION §21.5, §44.1). The rule is also enforced at run time: the process that runs the
+scheduler holds an advisory lock file next to the database (`<db>.lock`, `ownership.py`). A
+second server on the same file only serves the cache, shows a warning diagnostic and takes over
+when the owner stops; `gitlab-team-pulse refresh` refuses to run while a server owns the sync.
 
 ## Level 3: Components (inside the Python process)
 
@@ -172,7 +175,16 @@ flowchart TB
 - **Three version counters.** `data_version` changes on every sync step (the dashboard);
   `users_version` changes only with the directory or the selection (the People view);
   `teams_version` changes when a team is created, edited or deleted. Each browser view
-  refetches only when its own counter moves.
+  refetches only when its own counter moves. While a refresh runs, the dashboard reloads at
+  most every 10 seconds; bump a counter only when something was actually written.
+- **Browser requests are checked.** A middleware refuses writes (POST, PUT, PATCH, DELETE)
+  that a browser sends from another site (`Sec-Fetch-Site`, `Origin`) and, when bound to a
+  loopback address, any `Host` other than `localhost`, `127.0.0.1` and `[::1]` (DNS rebinding;
+  `TEAMPULSE_ALLOWED_HOSTS` sets the names explicitly).
+- **Sync writes run on the event loop.** Sync steps commit through synchronous sessions on the
+  asyncio loop, so a write briefly blocks async handlers. Each write takes milliseconds (a full
+  refresh of 21 demo people takes 1.2 s), so this is accepted for now; move the writes to a
+  worker thread if refreshes of many people make the UI lag ([review, finding 20](review-2026-11.md#20-sync-writes-sqlite-on-the-event-loop-thread-documented)).
 
 ### Sync categories and their cadence
 

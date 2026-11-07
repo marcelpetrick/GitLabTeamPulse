@@ -26,7 +26,8 @@ Alembic on SQLite, httpx, and a vanilla ES-module frontend with no build step.
 | `dashboard.py` | Read model: batched API payloads with freshness metadata, attention list, milestones |
 | `teams.py` | Team payloads, team reports from the history aggregates, weekly Markdown digest |
 | `about.py` | About dialog facts, read from the installed package metadata |
-| `app.py` | FastAPI factory, security headers (CSP), static UI and JSON API |
+| `app.py` | FastAPI factory, security headers (CSP), CSRF and host guard, static UI and JSON API |
+| `ownership.py` | Advisory lock file: exactly one process runs the background sync per database |
 | `freshness.py` | fresh / refreshing / stale / error / never classification |
 | `config.py` | `TEAMPULSE_*` settings from env, `.env` and the secret file |
 | `cli.py` | `serve`, `migrate`, `refresh`, `doctor`, `demo`, `fake-gitlab` |
@@ -109,7 +110,7 @@ All of these must stay green; never weaken them to get a change through.
   the milestone's issues. Epics stay optional behind a capability probe.
 - **Read-only.** A `read_api` token suffices; never send mutations to GitLab.
 - **Single process.** One worker owns the scheduler; no Redis, Celery, external DB or queue
-  (VISION §4).
+  (VISION §4). The owner holds `<db>.lock` (`ownership.py`); a second process only serves.
 
 ### Frontend rules
 
