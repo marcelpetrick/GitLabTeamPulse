@@ -36,7 +36,11 @@ async function request(method, path, body) {
   let payload = null;
   try {
     payload = await response.json();
-  } catch {
+  } catch (error) {
+    // The timeout also covers reading the body: never hand an OK response on as null.
+    if (error?.name === "TimeoutError" || error?.name === "AbortError") {
+      throw new ApiError("The dashboard server did not answer in time", 0, null);
+    }
     payload = null;
   }
   if (!response.ok && response.status !== 202) {

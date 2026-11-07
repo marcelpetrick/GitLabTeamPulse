@@ -59,16 +59,20 @@ def host_name(value: str) -> str:
 def cross_site(request: Request) -> bool:
     """True when a browser sent this request from another site (CSRF guard).
 
-    Browsers send ``Sec-Fetch-Site`` and, on unsafe methods, ``Origin``; scripts and curl send
-    neither and are not affected.
+    Modern browsers send ``Sec-Fetch-Site``, which is decisive and survives reverse proxies
+    that rewrite ``Host``. Older ones only send ``Origin``, compared with the ``Host`` or
+    ``X-Forwarded-Host`` the request arrived for. Scripts and curl send neither.
     """
-    if request.headers.get("sec-fetch-site", "").lower() in {"cross-site", "same-site"}:
-        return True
+    fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
+    if fetch_site:
+        return fetch_site not in {"same-origin", "none"}
     origin = request.headers.get("origin")
     if origin is None:
         return False
-    host = request.headers.get("host", "").strip().lower()
-    return origin.lower().partition("://")[2].rstrip("/") != host
+    authority = origin.strip().lower().partition("://")[2].rstrip("/")
+    hosts = {request.headers.get("host", "")}
+    hosts.update(request.headers.get("x-forwarded-host", "").split(","))
+    return authority not in {h.strip().lower() for h in hosts if h.strip()}
 
 
 @dataclass
@@ -159,6 +163,9 @@ def create_app(
                 claim.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await claim
+                if not owner.held:
+                    # Never took over: do not leave this process's warning to the owner's UI.
+                    service.resolve_problem("scheduler", "owner")
             await scheduler.stop()
             owner.release()
             await service.aclose()

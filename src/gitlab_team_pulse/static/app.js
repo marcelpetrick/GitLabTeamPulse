@@ -195,7 +195,9 @@ class App {
       this.dashboardView.onStatus(status);
       // Before the first route() there is no view yet; show() loads the right data itself.
       const crawling = status.crawler.state === "refreshing";
+      // A reset version (selection changed) always loads at once.
       const throttled = crawling && this.view === "dashboard" && !wasOffline
+        && this.loadedVersion.dashboard !== -1
         && Date.now() - this.lastDashboardLoad < BUSY_RELOAD_MS;
       // loadViewData() only fetches when the view's version moved, so a version seen while
       // throttled is still loaded by the first poll after the refresh.

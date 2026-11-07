@@ -49,11 +49,14 @@ def test_a_second_app_on_the_same_database_does_not_crawl(
     monkeypatch.setattr(app_module, "OWNER_RETRY_SECONDS", 3600.0)
     first = create_app(settings, client_factory=fake_client_factory(fake_app))
     second = create_app(settings, client_factory=fake_client_factory(fake_app))
-    with TestClient(first), TestClient(second):
-        assert first.state.ctx.scheduler._task is not None
-        assert second.state.ctx.scheduler._task is None
-        [problem] = open_owner_problems(second)
-        assert problem.severity == "warning"
+    with TestClient(first):
+        with TestClient(second):
+            assert first.state.ctx.scheduler._task is not None
+            assert second.state.ctx.scheduler._task is None
+            [problem] = open_owner_problems(second)
+            assert problem.severity == "warning"
+        # The waiting process stopped without taking over: its warning goes with it.
+        assert open_owner_problems(first) == []
     # The owner stopped: a new owner takes over and closes the diagnostic.
     third = create_app(settings, client_factory=fake_client_factory(fake_app))
     with TestClient(third):

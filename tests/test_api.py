@@ -316,7 +316,15 @@ def test_cross_site_writes_are_refused(
 
 @pytest.mark.parametrize(
     "headers",
-    [{}, {"Origin": "http://testserver"}, {"Sec-Fetch-Site": "same-origin"}],
+    [
+        {},
+        {"Origin": "http://testserver"},
+        {"Sec-Fetch-Site": "same-origin"},
+        {"Sec-Fetch-Site": "none"},
+        # A reverse proxy rewrote Host: Sec-Fetch-Site decides, or X-Forwarded-Host matches.
+        {"Sec-Fetch-Site": "same-origin", "Origin": "https://pulse.example.com"},
+        {"Origin": "https://pulse.example.com", "X-Forwarded-Host": "pulse.example.com"},
+    ],
 )
 def test_same_origin_and_script_writes_pass(
     api: tuple[TestClient, AppContext], headers: dict[str, str]
