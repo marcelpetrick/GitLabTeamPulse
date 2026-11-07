@@ -174,7 +174,9 @@ class SyncService:
             await self._client.aclose()
             self._client = None
 
-    def record_problem(self, subsystem: str, operation: str, message: str) -> None:
+    def record_problem(
+        self, subsystem: str, operation: str, message: str, *, severity: str = "error"
+    ) -> None:
         """Persist a diagnostic on a best-effort basis (the database may be the problem)."""
         try:
             with self.session_factory() as session:
@@ -183,12 +185,22 @@ class SyncService:
                     subsystem=subsystem,
                     operation=operation,
                     message=message,
+                    severity=severity,
                     now=self.clock(),
                 )
                 store.bump_data_version(session)
                 session.commit()
         except SQLAlchemyError:
             log.exception("could not persist diagnostic: %s", message)
+
+    def resolve_problem(self, subsystem: str, operation: str) -> None:
+        """Close the open diagnostics of one operation; only bumps when there were any."""
+        with self.session_factory() as session:
+            if store.resolve_errors(
+                session, subsystem=subsystem, operation=operation, now=self.clock()
+            ):
+                store.bump_data_version(session)
+            session.commit()
 
     def _begin(self, kind: str, trigger: str) -> str:
         with self.session_factory() as session:

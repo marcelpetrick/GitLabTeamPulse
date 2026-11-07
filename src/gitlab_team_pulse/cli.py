@@ -21,6 +21,7 @@ from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.fake_gitlab import FAKE_TOKEN, create_fake_gitlab
 from gitlab_team_pulse.gitlab.errors import GitLabError
 from gitlab_team_pulse.logging_setup import configure_logging
+from gitlab_team_pulse.ownership import OwnerLock, lock_path
 from gitlab_team_pulse.sync import ClientFactory, SyncService, default_client_factory, utcnow
 
 OK, WARN, FAIL = "ok", "warn", "fail"
@@ -73,7 +74,18 @@ async def _refresh(settings: Settings, client_factory: ClientFactory) -> tuple[s
 def cmd_refresh(_args: argparse.Namespace) -> int:
     settings = _load_settings()
     configure_logging(settings.log_level)
-    directory, selected = asyncio.run(_refresh(settings, default_client_factory))
+    owner = OwnerLock(lock_path(settings.database_path))
+    if not owner.acquire():
+        print(
+            "another process (a running server?) owns the background sync of "
+            f"{settings.database_path}; use its Refresh button instead",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        directory, selected = asyncio.run(_refresh(settings, default_client_factory))
+    finally:
+        owner.release()
     print(f"directory: {directory}\nselected users: {selected}")
     return 0 if directory == "ok" and selected in {"ok", "partial"} else 1
 

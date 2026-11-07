@@ -187,3 +187,17 @@ def test_cli_overrides_are_validated(env: Path, uvicorn_calls: list[dict[str, An
     assert uvicorn_calls == []
     assert cli.main(["serve", "--host", "127.0.0.2", "--port", "8123"]) == 0
     assert (uvicorn_calls[0]["host"], uvicorn_calls[0]["port"]) == ("127.0.0.2", 8123)
+
+
+def test_refresh_refuses_while_another_process_owns_the_sync(
+    env: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from gitlab_team_pulse.ownership import OwnerLock, lock_path
+
+    other = OwnerLock(lock_path(env))
+    assert other.acquire()
+    try:
+        assert cli.main(["refresh"]) == 1
+        assert "owns the background sync" in capsys.readouterr().err
+    finally:
+        other.release()

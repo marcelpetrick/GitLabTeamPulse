@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -20,6 +22,7 @@ from gitlab_team_pulse import __version__, about, dashboard, db, meeting, store,
 from gitlab_team_pulse.config import Settings
 from gitlab_team_pulse.logging_setup import configure_logging, get_logger
 from gitlab_team_pulse.models import Project, Team, User
+from gitlab_team_pulse.ownership import OwnerLock, lock_path
 from gitlab_team_pulse.scheduler import Scheduler
 from gitlab_team_pulse.sync import ClientFactory, SyncService, default_client_factory
 
@@ -88,6 +91,31 @@ class TeamInput(BaseModel):
     scopes: list[str] = Field(default_factory=list, max_length=100)
 
 
+NOT_OWNER = (
+    "Another process runs the background sync for this database; this one only serves the "
+    "cache until that process stops"
+)
+OWNER_RETRY_SECONDS = 30.0
+
+
+def take_ownership(service: SyncService, scheduler: Scheduler) -> None:
+    service.resolve_problem("scheduler", "owner")
+    scheduler.start()
+
+
+async def wait_for_ownership(
+    owner: OwnerLock,
+    service: SyncService,
+    scheduler: Scheduler,
+    retry_seconds: float = OWNER_RETRY_SECONDS,
+) -> None:
+    """Take over the background sync as soon as the other owner stops."""
+    while not owner.acquire():  # noqa: ASYNC110 - a file lock has no event to wait on
+        await asyncio.sleep(retry_seconds)
+    log.info("background sync owner lock acquired")
+    take_ownership(service, scheduler)
+
+
 def ctx(request: Request) -> AppContext:
     context: AppContext = request.app.state.ctx
     return context
@@ -114,12 +142,24 @@ def create_app(
         app.state.ctx = AppContext(settings, engine, session_factory, service, scheduler)
         if not settings.gitlab_configured:
             log.warning("GitLab is not configured; serving cached data only")
+        owner = OwnerLock(lock_path(settings.database_path))
+        claim: asyncio.Task[None] | None = None
         if settings.scheduler_enabled:
-            scheduler.start()
+            if owner.acquire():
+                take_ownership(service, scheduler)
+            else:
+                log.warning("%s; serving the cache and waiting", NOT_OWNER)
+                service.record_problem("scheduler", "owner", NOT_OWNER, severity="warning")
+                claim = asyncio.create_task(wait_for_ownership(owner, service, scheduler))
         try:
             yield
         finally:
+            if claim is not None:
+                claim.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await claim
             await scheduler.stop()
+            owner.release()
             await service.aclose()
             engine.dispose()
             log.info("stopped")
