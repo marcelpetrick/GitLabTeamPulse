@@ -693,3 +693,49 @@ async def test_an_auth_failure_of_the_epic_query_still_fails_the_work_dataset(
     await service.sync_selected("scheduled")
     with session_factory() as session:
         assert store.get_state(session, "work", ALEX).status == "error"
+
+
+async def test_failed_project_lookups_do_not_bump_the_data_version(
+    service: SyncService, session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gitlab_team_pulse.gitlab.errors import GitLabUnavailableError
+
+    async def down(_project_id: int) -> object:
+        raise GitLabUnavailableError("projects: server error (503)")
+
+    client = service.client()
+    monkeypatch.setattr(client, "get_project", down)
+    with session_factory() as session:
+        before = store.data_version(session)
+    await service._resolve_projects(client, {101, 102})
+    with session_factory() as session:
+        assert store.data_version(session) == before
+
+
+async def test_gather_or_cancel_stops_the_sibling_request() -> None:
+    import asyncio
+
+    from gitlab_team_pulse.sync import gather_or_cancel
+
+    cancelled = asyncio.Event()
+
+    async def fails() -> int:
+        await asyncio.sleep(0)
+        raise ValueError("401")
+
+    async def pages_forever() -> int:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return 1
+
+    with pytest.raises(ValueError, match="401"):
+        await gather_or_cancel(fails(), pages_forever())
+    assert cancelled.is_set()
+
+    async def value(result: int) -> int:
+        return result
+
+    assert await gather_or_cancel(value(1), value(2)) == (1, 2)

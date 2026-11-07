@@ -92,6 +92,19 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+async def gather_or_cancel[A, B](first: Awaitable[A], second: Awaitable[B]) -> tuple[A, B]:
+    """Both results, or the first failure with the other request cancelled (``gather`` lets
+    the sibling run on, e.g. paging through every account after a 401)."""
+    one, two = asyncio.ensure_future(first), asyncio.ensure_future(second)
+    try:
+        return await one, await two
+    finally:
+        for task in (one, two):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(one, two, return_exceptions=True)
+
+
 def default_client_factory(settings: Settings) -> GitLabClient:
     token = settings.resolve_token()
     if not settings.gitlab_url or token is None:
@@ -236,7 +249,7 @@ class SyncService:
         try:
             try:
                 client = self.client()
-                me, users = await asyncio.gather(client.current_user(), client.list_users())
+                me, users = await gather_or_cancel(client.current_user(), client.list_users())
             except GitLabError as exc:
                 self._upstream(exc)
                 self._directory_failed(run_id, exc)
@@ -746,7 +759,8 @@ class SyncService:
             events = await client.get_user_recent_activity(user_id, after)
             if cursor is None and len(events) < RECENT_EVENTS:
                 older = await client.get_user_recent_activity(user_id, limit=RECENT_EVENTS)
-                events = [*events, *(e for e in older if e.id not in {x.id for x in events})]
+                known = {e.id for e in events}
+                events = [*events, *(e for e in older if e.id not in known)]
             return events
 
         def write(
@@ -998,6 +1012,7 @@ class SyncService:
             *(client.get_project(pid) for pid in sorted(missing)), return_exceptions=True
         )
         with self.session_factory() as session:
+            stored = 0
             for pid, result in zip(sorted(missing), results, strict=True):
                 if isinstance(result, BaseException):
                     log.warning("project=%d metadata unavailable: %s", pid, result)
@@ -1008,8 +1023,10 @@ class SyncService:
                     continue
                 self._project_failures.pop(pid, None)
                 store.upsert_project(session, result, now)
-            store.bump_data_version(session)
-            session.commit()
+                stored += 1
+            if stored:  # nothing new: no browser needs to refetch the dashboard
+                store.bump_data_version(session)
+                session.commit()
 
     # ------------------------------------------------------------------ cleanup
 

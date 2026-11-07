@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import delete, exists, func, select, update
+from sqlalchemy import delete, exists, func, select, tuple_, update
 from sqlalchemy.orm import Session
 
 from gitlab_team_pulse.gitlab.models import (
@@ -332,10 +332,12 @@ def replace_user_work(
     """
     by_key: dict[tuple[str, int], WorkItem] = {(i.kind, i.gitlab_id): i for i in items}
     existing: dict[tuple[str, int], WorkItemRecord] = {}
-    ids = {gitlab_id for _, gitlab_id in by_key}
-    if ids:
+    if by_key:
+        # (kind, gitlab_id) pairs use the unique index; gitlab_id alone would scan the table.
         for found in session.scalars(
-            select(WorkItemRecord).where(WorkItemRecord.gitlab_id.in_(ids))
+            select(WorkItemRecord).where(
+                tuple_(WorkItemRecord.kind, WorkItemRecord.gitlab_id).in_(list(by_key))
+            )
         ):
             existing[(found.kind, found.gitlab_id)] = found
     for key, item in by_key.items():
