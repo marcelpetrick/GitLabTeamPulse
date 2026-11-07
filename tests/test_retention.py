@@ -219,3 +219,15 @@ def test_open_errors_of_people_no_longer_tracked_are_resolved(
         still_open = {e.user_id for e in store.list_errors(session, include_resolved=False)}
     assert still_open == {1, 2, None}  # selected, team member and global problems stay
     assert stats.errors_resolved == 1
+
+
+def test_a_busy_vacuum_does_not_fail_a_committed_cleanup(
+    service: SyncService, session_factory: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def busy(*_args: object) -> bool:
+        raise OperationalError("VACUUM", {}, Exception("database is locked"))
+
+    monkeypatch.setattr(retention, "vacuum_if_needed", busy)
+    assert service.cleanup() == "ok"
+    with session_factory() as session:
+        assert store.unresolved_error_count(session) == 0

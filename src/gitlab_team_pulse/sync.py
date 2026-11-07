@@ -1022,8 +1022,6 @@ class SyncService:
                 store.resolve_errors(session, subsystem="cleanup", now=now)
                 session.commit()
                 bind = session.get_bind()
-            if isinstance(bind, Engine):
-                retention.vacuum_if_needed(bind)
         except SQLAlchemyError as exc:
             log.exception("cleanup failed")
             with self.session_factory() as session:
@@ -1037,4 +1035,10 @@ class SyncService:
                 session.commit()
             return "error"
         log.info("cleanup: %s", stats.summary())
+        if isinstance(bind, Engine):
+            try:
+                retention.vacuum_if_needed(bind)
+            except SQLAlchemyError as exc:
+                # Usually a sync write holding the database; the cleanup itself is committed.
+                log.info("VACUUM skipped, retried on the next cleanup: %s", type(exc).__name__)
         return "ok"
