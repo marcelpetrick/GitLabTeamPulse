@@ -680,6 +680,13 @@ def global_freshness(
     return directory, selected
 
 
+def gitlab_configured(runtime: RuntimeState, settings: Settings) -> bool:
+    """Known from the sync service without reading the token file on every poll."""
+    if runtime.gitlab_configured is None:
+        runtime.gitlab_configured = settings.gitlab_configured
+    return runtime.gitlab_configured
+
+
 def build_status(
     session: Session,
     settings: Settings,
@@ -735,7 +742,10 @@ def build_status(
             "message": runtime.last_upstream_error,
             "last_ok_at": runtime.last_upstream_ok_at,
         },
-        "gitlab": {"configured": settings.gitlab_configured, "url": settings.gitlab_url or None},
+        "gitlab": {
+            "configured": gitlab_configured(runtime, settings),
+            "url": settings.gitlab_url or None,
+        },
         "capabilities": {"epics": runtime.epics},
     }
 

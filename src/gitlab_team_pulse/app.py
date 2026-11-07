@@ -140,7 +140,8 @@ def create_app(
         service = SyncService(settings, session_factory, client_factory=client_factory)
         scheduler = Scheduler(service)
         app.state.ctx = AppContext(settings, engine, session_factory, service, scheduler)
-        if not settings.gitlab_configured:
+        service.runtime.gitlab_configured = settings.gitlab_configured
+        if not service.runtime.gitlab_configured:
             log.warning("GitLab is not configured; serving cached data only")
         owner = OwnerLock(lock_path(settings.database_path))
         claim: asyncio.Task[None] | None = None
@@ -226,7 +227,9 @@ def api_router() -> APIRouter:
             "version": __version__,
             "database": database,
             "migrated": migrated,
-            "gitlab_configured": context.settings.gitlab_configured,
+            "gitlab_configured": dashboard.gitlab_configured(
+                context.service.runtime, context.settings
+            ),
         }
         return JSONResponse(body, status_code=200 if migrated else 503)
 

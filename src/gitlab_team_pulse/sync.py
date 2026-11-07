@@ -140,6 +140,9 @@ class RuntimeState:
     epics_open_filter: bool | None = None  # does GitLab accept the open-only epic query?
     epics_batch: bool | None = None  # does GitLab accept one epic query for several people?
     epics_read_failing: bool = False  # a passing epic failure has an open diagnostic
+    # URL and token present; None until known. Kept current by SyncService.client(), so status
+    # polls never read the token file.
+    gitlab_configured: bool | None = None
 
 
 @dataclass
@@ -179,7 +182,12 @@ class SyncService:
 
     def client(self) -> GitLabClient:
         if self._client is None:
-            self._client = self.client_factory(self.settings)
+            try:
+                self._client = self.client_factory(self.settings)
+            except GitLabNotConfiguredError:
+                self.runtime.gitlab_configured = False
+                raise
+            self.runtime.gitlab_configured = True
         return self._client
 
     async def aclose(self) -> None:

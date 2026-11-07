@@ -7,9 +7,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from gitlab_team_pulse import store
 from gitlab_team_pulse.config import Settings
+from gitlab_team_pulse.gitlab.client import GitLabClient
 from gitlab_team_pulse.sync import INCOMPLETE_DIRECTORY, SyncService, default_client_factory
 
-from .conftest import Clock
+from .conftest import Clock, fake_client_factory
 
 
 async def test_directory_sync_stores_every_account_type(
@@ -120,3 +121,26 @@ async def test_directory_due(service: SyncService, fake_app: FastAPI, clock: Clo
     fake_app.state.down = True
     await service.sync_directory("scheduled")
     assert service.directory_due(clock.now + timedelta(minutes=10))
+
+
+async def test_configured_flag_follows_the_client_without_rereading_the_token(
+    settings: Settings, session_factory: sessionmaker[Session], fake_app: FastAPI
+) -> None:
+    from gitlab_team_pulse.dashboard import gitlab_configured
+    from gitlab_team_pulse.sync import GitLabNotConfiguredError
+
+    attempts: list[int] = []
+
+    def factory(config: Settings) -> GitLabClient:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise GitLabNotConfiguredError("not yet")
+        return fake_client_factory(fake_app)(config)
+
+    service = SyncService(settings, session_factory, client_factory=factory)
+    assert gitlab_configured(service.runtime, settings) is True  # from the settings, once
+    assert await service.sync_directory("startup") == "error"
+    assert gitlab_configured(service.runtime, settings) is False
+    assert await service.sync_directory("manual") == "ok"  # e.g. the secret file appeared
+    assert gitlab_configured(service.runtime, settings) is True
+    await service.aclose()
