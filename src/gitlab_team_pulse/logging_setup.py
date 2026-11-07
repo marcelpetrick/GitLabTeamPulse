@@ -19,13 +19,21 @@ def get_logger(subsystem: str) -> logging.Logger:
 
 
 class SubsystemFormatter(logging.Formatter):
-    """Adds a ``[subsystem]`` column derived from the logger name."""
+    """Adds a ``[subsystem]`` column derived from the logger name and redacts secrets from the
+    whole rendered line, including exception tracebacks (the filter only sees the message)."""
+
+    def __init__(self, *args: object, secrets: Iterable[str] = (), **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.secrets = [secret for secret in secrets if secret]
 
     def format(self, record: logging.LogRecord) -> str:
         name = record.name
         prefix = f"{ROOT_LOGGER}."
         record.subsystem = name[len(prefix) :] if name.startswith(prefix) else name
-        return super().format(record)
+        line = super().format(record)
+        for secret in self.secrets:
+            line = line.replace(secret, REDACTED)
+        return line
 
 
 class RedactingFilter(logging.Filter):
@@ -50,12 +58,14 @@ class RedactingFilter(logging.Filter):
 
 def configure_logging(level: str = "INFO", secrets: Iterable[str] = ()) -> logging.Handler:
     """Install one stdout handler on the root logger; idempotent across calls."""
+    secrets = list(secrets)
     handler = logging.StreamHandler(sys.stdout)
     handler.set_name("teampulse")
     handler.setFormatter(
         SubsystemFormatter(
             fmt="%(asctime)s %(levelname)-7s [%(subsystem)s] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
+            secrets=secrets,
         )
     )
     handler.addFilter(RedactingFilter(secrets))

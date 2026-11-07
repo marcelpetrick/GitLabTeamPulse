@@ -46,3 +46,14 @@ def test_filter_leaves_unrelated_messages_untouched() -> None:
     record = logging.LogRecord("x", logging.INFO, __file__, 1, "has token", None, None)
     RedactingFilter(["token"]).filter(record)
     assert record.getMessage() == f"has {REDACTED}"
+
+
+def test_tracebacks_are_redacted_too(capsys: pytest.CaptureFixture[str]) -> None:
+    configure_logging("INFO", secrets=["s3cr3t"])
+    try:
+        raise RuntimeError("request failed with token s3cr3t")
+    except RuntimeError:
+        get_logger("sync").exception("refresh crashed")
+    out = capsys.readouterr().out
+    assert "RuntimeError: request failed with token ***" in out
+    assert "s3cr3t" not in out
