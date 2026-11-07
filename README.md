@@ -224,12 +224,17 @@ directory; for another file use `uv run --env-file path/to/file.env gitlab-team-
 | `TEAMPULSE_GITLAB_TIMEOUT_SECONDS` / `_MAX_RETRIES` | `20` / `3` | Request timeout and bounded retries |
 | `TEAMPULSE_DATABASE_PATH` | `~/.local/share/gitlab-team-pulse/teampulse.db` | SQLite file (container: `/data/teampulse.db`) |
 | `TEAMPULSE_HOST` / `TEAMPULSE_PORT` | `127.0.0.1` / `8000` | Bind address (container: `0.0.0.0`) |
+| `TEAMPULSE_ALLOWED_HOSTS` | — | Comma-separated host names the app answers to (DNS rebinding guard; `*` for any). Empty: only `localhost`, `127.0.0.1` and `[::1]` when bound to a loopback address, any host otherwise |
+| `TEAMPULSE_FORWARDED_ALLOW_IPS` | `127.0.0.1` | Container/Gunicorn only: proxies whose `X-Forwarded-*` headers are trusted |
 | `TEAMPULSE_LOG_LEVEL` | `INFO` | `DEBUG` … `CRITICAL` |
 | `TEAMPULSE_SELECTED_REFRESH_INTERVAL_SECONDS` | `600` | Selected-user refresh |
 | `TEAMPULSE_USER_REFRESH_INTERVAL_SECONDS` | `3600` | Directory refresh |
 | `TEAMPULSE_UI_POLL_INTERVAL_SECONDS` | `20` | Browser polling of the local backend |
 | `TEAMPULSE_STALE_GRACE_SECONDS` | `120` | Grace before data is shown as stale |
 | `TEAMPULSE_MANUAL_REFRESH_MIN_INTERVAL_SECONDS` | `10` | Refresh-storm protection |
+| `TEAMPULSE_CLEANUP_INTERVAL_SECONDS` | `3600` | Rolling retention cleanup |
+| `TEAMPULSE_SCHEDULER_TICK_SECONDS` | `5` | How often the scheduler checks which datasets are due |
+| `TEAMPULSE_SCHEDULER_ENABLED` | `true` | `false` serves the cache without background syncs |
 | `TEAMPULSE_RETENTION_HOURS` / `TEAMPULSE_ERROR_RETENTION_DAYS` | `24` / `7` | Rolling cache and resolved-error retention |
 | `TEAMPULSE_WORK_WINDOW_DAYS` | `30` | "Recently relevant" work window |
 | `TEAMPULSE_ACTIVITY_DAYS` | `7` | Activity and timelog window |

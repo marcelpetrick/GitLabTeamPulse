@@ -26,6 +26,8 @@ def _no_docker_secret(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     for name in list(__import__("os").environ):
         if name.startswith("TEAMPULSE_"):
             monkeypatch.delenv(name)
+    # Starlette's TestClient sends ``Host: testserver``; tests of the host guard clear this.
+    monkeypatch.setenv("TEAMPULSE_ALLOWED_HOSTS", "testserver,127.0.0.1,localhost")
 
 
 @pytest.fixture

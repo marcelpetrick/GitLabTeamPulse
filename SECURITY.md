@@ -30,6 +30,8 @@ GitLab Team Pulse is a prototype for **trusted internal networks** (see
   The SQLite file holds cached GitLab data (names, titles, timelogs), so treat backups of it
   accordingly.
 
-Built-in safeguards: a strict Content Security Policy, no CORS, sanitized GitLab links,
+Built-in safeguards: a strict Content Security Policy, no CORS, writes refused when a browser
+sends them from another site (CSRF), unknown `Host` names refused when bound to localhost (DNS
+rebinding; set `TEAMPULSE_ALLOWED_HOSTS` behind a proxy), sanitized GitLab links,
 throttled manual refresh, a non-root image, and weekly Dependabot updates for pinned
 dependencies.

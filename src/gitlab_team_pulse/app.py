@@ -42,6 +42,32 @@ CONTENT_SECURITY_POLICY = "; ".join(
 )
 
 
+UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def host_name(value: str) -> str:
+    """``Host`` header without the port, lower-cased (``[::1]:8000`` -> ``[::1]``)."""
+    value = value.strip().lower()
+    if value.startswith("["):
+        return value.split("]", 1)[0] + "]"
+    return value.rsplit(":", 1)[0] if value.count(":") == 1 else value
+
+
+def cross_site(request: Request) -> bool:
+    """True when a browser sent this request from another site (CSRF guard).
+
+    Browsers send ``Sec-Fetch-Site`` and, on unsafe methods, ``Origin``; scripts and curl send
+    neither and are not affected.
+    """
+    if request.headers.get("sec-fetch-site", "").lower() in {"cross-site", "same-site"}:
+        return True
+    origin = request.headers.get("origin")
+    if origin is None:
+        return False
+    host = request.headers.get("host", "").strip().lower()
+    return origin.lower().partition("://")[2].rstrip("/") != host
+
+
 @dataclass
 class AppContext:
     settings: Settings
@@ -107,11 +133,23 @@ def create_app(
         openapi_url="/api/openapi.json",
     )
 
+    allowed_hosts = settings.allowed_host_names
+
     @app.middleware("http")
     async def security_headers(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        response = await call_next(request)
+        if allowed_hosts is not None and (
+            host_name(request.headers.get("host", "")) not in allowed_hosts
+        ):
+            # DNS rebinding: a foreign name pointing at this address must not read the cache.
+            response: Response = JSONResponse(
+                {"detail": "Unknown host; set TEAMPULSE_ALLOWED_HOSTS"}, status_code=400
+            )
+        elif request.method in UNSAFE_METHODS and cross_site(request):
+            response = JSONResponse({"detail": "Cross-site request refused"}, status_code=403)
+        else:
+            response = await call_next(request)
         if not request.url.path.startswith("/api/docs"):
             response.headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
         response.headers["X-Content-Type-Options"] = "nosniff"

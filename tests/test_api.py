@@ -292,3 +292,66 @@ def test_large_responses_are_compressed(api: tuple[TestClient, AppContext]) -> N
     assert compressed.headers["content-security-policy"]  # security headers still apply
     plain = client.get("/api/dashboard", headers={"Accept-Encoding": "identity"})
     assert "content-encoding" not in plain.headers
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Sec-Fetch-Site": "same-site"},
+        {"Origin": "https://evil.example"},
+        {"Origin": "http://testserver:9999"},
+    ],
+)
+def test_cross_site_writes_are_refused(
+    api: tuple[TestClient, AppContext], headers: dict[str, str]
+) -> None:
+    client, _ = api
+    response = client.post("/api/refresh", headers=headers)
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Cross-site request refused"}
+    # Reads stay possible (the browser's same-origin policy protects their content).
+    assert client.get("/api/status", headers=headers).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"Origin": "http://testserver"}, {"Sec-Fetch-Site": "same-origin"}],
+)
+def test_same_origin_and_script_writes_pass(
+    api: tuple[TestClient, AppContext], headers: dict[str, str]
+) -> None:
+    client, _ = api
+    assert client.post("/api/refresh", headers=headers).status_code == 202
+
+
+@pytest.mark.parametrize(
+    ("allowed", "bind", "host", "status"),
+    [
+        ("", "127.0.0.1", "localhost:8000", 200),
+        ("", "127.0.0.1", "127.0.0.1:8000", 200),
+        ("", "::1", "[::1]:8000", 200),
+        ("", "127.0.0.1", "evil.example:8000", 400),
+        ("", "0.0.0.0", "evil.example", 200),  # noqa: S104 - servers set the variable
+        ("pulse.example.com", "0.0.0.0", "PULSE.example.com:443", 200),  # noqa: S104
+        ("pulse.example.com", "0.0.0.0", "evil.example", 400),  # noqa: S104
+        ("*", "127.0.0.1", "evil.example", 200),
+    ],
+)
+def test_host_guard_against_dns_rebinding(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    allowed: str,
+    bind: str,
+    host: str,
+    status: int,
+) -> None:
+    monkeypatch.delenv("TEAMPULSE_ALLOWED_HOSTS")
+    config = settings.model_copy(
+        update={"scheduler_enabled": False, "allowed_hosts": allowed, "host": bind}
+    )
+    with TestClient(create_app(config)) as client:
+        response = client.get("/api/status", headers={"Host": host})
+    assert response.status_code == status
+    if status == 400:
+        assert "TEAMPULSE_ALLOWED_HOSTS" in response.json()["detail"]

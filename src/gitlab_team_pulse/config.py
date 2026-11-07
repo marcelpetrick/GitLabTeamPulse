@@ -15,6 +15,8 @@ from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_SECRET_FILE = Path("/run/secrets/gitlab_token")
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+LOOPBACK_NAMES = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
 
 
 def default_database_path() -> Path:
@@ -46,6 +48,9 @@ class Settings(BaseSettings):
 
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
+    # Comma-separated host names the app answers to (DNS rebinding guard). Empty: loopback names
+    # only when bound to a loopback address, any host otherwise.
+    allowed_hosts: str = ""
     log_level: str = "INFO"
 
     user_refresh_interval_seconds: int = Field(default=3600, ge=60)
@@ -110,6 +115,18 @@ class Settings(BaseSettings):
                     return SecretStr(token)
         if self.gitlab_token and self.gitlab_token.get_secret_value().strip():
             return SecretStr(self.gitlab_token.get_secret_value().strip())
+        return None
+
+    @property
+    def allowed_host_names(self) -> frozenset[str] | None:
+        """Host names (without port) the app answers to; None means any host."""
+        names = {h.strip().lower() for h in self.allowed_hosts.split(",") if h.strip()}
+        if "*" in names:
+            return None
+        if names:
+            return frozenset(names)
+        if self.host in LOOPBACK_HOSTS:
+            return LOOPBACK_NAMES
         return None
 
     @property
