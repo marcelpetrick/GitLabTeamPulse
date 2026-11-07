@@ -8,8 +8,20 @@ export class ApiError extends Error {
   }
 }
 
+// A request stuck on a half-open connection (laptop sleep, VPN switch) must not freeze polling.
+const TIMEOUT_MS = 20000;
+
+/** FastAPI sends validation errors as a list of {loc, msg}; anything else as text. */
+export function describeDetail(detail) {
+  if (Array.isArray(detail)) {
+    return detail.map((d) => (d && typeof d === "object" ? d.msg || JSON.stringify(d) : String(d))).join("; ");
+  }
+  return typeof detail === "object" && detail !== null ? JSON.stringify(detail) : String(detail);
+}
+
 async function request(method, path, body) {
   const options = { method, headers: { Accept: "application/json" }, cache: "no-store" };
+  if (typeof AbortSignal !== "undefined" && AbortSignal.timeout) options.signal = AbortSignal.timeout(TIMEOUT_MS);
   if (body !== undefined) {
     options.headers["Content-Type"] = "application/json";
     options.body = JSON.stringify(body);
@@ -18,7 +30,8 @@ async function request(method, path, body) {
   try {
     response = await fetch(path, options);
   } catch (error) {
-    throw new ApiError("The dashboard server is unreachable", 0, null);
+    const timedOut = error?.name === "TimeoutError" || error?.name === "AbortError";
+    throw new ApiError(timedOut ? "The dashboard server did not answer in time" : "The dashboard server is unreachable", 0, null);
   }
   let payload = null;
   try {
@@ -28,7 +41,7 @@ async function request(method, path, body) {
   }
   if (!response.ok && response.status !== 202) {
     const detail = payload && (payload.detail || payload.status);
-    throw new ApiError(detail ? String(detail) : `HTTP ${response.status}`, response.status, payload);
+    throw new ApiError(detail ? describeDetail(detail) : `HTTP ${response.status}`, response.status, payload);
   }
   return payload;
 }

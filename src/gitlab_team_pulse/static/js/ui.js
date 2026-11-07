@@ -61,6 +61,7 @@ export function rel(ts, prefix = "") {
 }
 
 export function tickRelativeTimes(root = document) {
+  if (root === document && document.hidden) return; // caught up when the tab is shown again
   const now = new Date();
   for (const node of root.querySelectorAll(".rel[data-ts]")) {
     node.textContent = (node.dataset.prefix || "") + relativeTime(node.dataset.ts, now);

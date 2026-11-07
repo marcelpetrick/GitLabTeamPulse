@@ -71,9 +71,9 @@ function timeChip(item) {
 }
 
 const STAT_TITLES = {
-  "work items": (days) => `Assigned issues and merge requests plus MRs to review: updated in the last ${days} days, and every open one however old`,
-  "actions · 7 days": "GitLab events of this person in the last 7 days: pushes, comments, issues, merge requests and more",
-  "logged · 7 days": "Time this person logged in GitLab time tracking in the last 7 days (never estimated)",
+  work: (days) => `Assigned issues and merge requests plus MRs to review: updated in the last ${days} days, and every open one however old`,
+  actions: (days) => `GitLab events of this person in the last ${plural(days, "day")}: pushes, comments, issues, merge requests and more`,
+  logged: (days) => `Time this person logged in GitLab time tracking in the last ${plural(days, "day")} (never estimated)`,
 };
 const WORK_FILTER_TITLES = {
   all: "Every item in the list",
@@ -135,7 +135,7 @@ export class DashboardView {
       h("div", {},
         h("h1", { id: "dashboard-title" }, "Dashboard"),
         h("div", { class: "subtitle" },
-          data ? `${plural(data.cards.length, "person", "people")} monitored · last 7 days` : "Loading…")),
+          data ? `${plural(data.cards.length, "person", "people")} monitored · last ${plural(this.activityDays(), "day")}` : "Loading…")),
       h("div", { class: "spacer" }),
       h("div", { class: "toolbar" },
         selected ? freshnessPill(selected, { label: "Selected users data" }) : null,
@@ -267,9 +267,9 @@ export class DashboardView {
         h("div", { class: "stats" },
           counts.stalled ? this.alertStat(user, counts.stalled, "stalled", `Open items without any update for ${this.app.dashboard?.attention?.stalled_days || 7}+ days — click to list them`) : null,
           counts.overdue ? this.alertStat(user, counts.overdue, "overdue", "Open items past their due date — click to list them") : null,
-          this.stat(counts.work_total, "work items", `${counts.work_open} open`),
-          this.stat(counts.events_7d, "actions · 7 days"),
-          this.stat(formatDuration(counts.time_seconds_7d), "logged · 7 days", null, lowTime))));
+          this.stat(counts.work_total, "work", "work items", `${counts.work_open} open`),
+          this.stat(counts.events_7d, "actions", `actions · ${plural(this.activityDays(), "day")}`),
+          this.stat(formatDuration(counts.time_seconds_7d), "logged", `logged · ${plural(this.activityDays(), "day")}`, null, lowTime))));
     if (neverSynced) {
       article.append(h("div", { class: "card-body" },
         h("div", { class: "panel" }, h("p", { class: "card-empty" },
@@ -279,8 +279,8 @@ export class DashboardView {
     article.append(
       h("div", { class: "card-body" },
         this.activityPanel(card, state),
-        h("section", { class: "panel", "aria-label": "Activity in the last 7 days" },
-          h("div", { class: "panel-head" }, h("h3", {}, "Activity · last 7 days")),
+        h("section", { class: "panel", "aria-label": `Activity in the last ${plural(this.activityDays(), "day")}` },
+          h("div", { class: "panel-head" }, h("h3", {}, `Activity · last ${plural(this.activityDays(), "day")}`)),
           activityChart(card.activity_days, today)),
         this.timePanel(card, state, today)),
       this.contributionPanel(card, state),
@@ -288,10 +288,16 @@ export class DashboardView {
     return article;
   }
 
-  stat(value, label, extra = null, warn = false) {
-    const windowDays = this.app.dashboard?.work_window_days || 30;
-    const text = STAT_TITLES[label];
-    const title = warn ? "No time logged in GitLab during the last 7 days" : (typeof text === "function" ? text(windowDays) : text) || label;
+  /** The activity and timelog window the server counts over (TEAMPULSE_ACTIVITY_DAYS). */
+  activityDays() {
+    return this.app.dashboard?.activity_days || 7;
+  }
+
+  stat(value, kind, label, extra = null, warn = false) {
+    const days = kind === "work" ? this.app.dashboard?.work_window_days || 30 : this.activityDays();
+    const title = warn
+      ? `No time logged in GitLab during the last ${plural(days, "day")}`
+      : STAT_TITLES[kind](days);
     return h("div", { class: `stat${warn ? " warn" : ""}`, title },
       h("span", { class: "value" }, warn ? [icon("warning"), " ", String(value)] : String(value)),
       h("span", { class: "label" }, extra ? `${label} · ${extra}` : label));
@@ -362,8 +368,8 @@ export class DashboardView {
     const time = card.time;
     const byDay = new Map();
     for (const entry of time.entries) byDay.set(entry.date, [...(byDay.get(entry.date) || []), entry]);
-    const panel = h("section", { class: "panel", "aria-label": "Logged time in the last 7 days" },
-      h("div", { class: "panel-head" }, h("h3", {}, "Logged time · last 7 days")),
+    const panel = h("section", { class: "panel", "aria-label": `Logged time in the last ${plural(this.activityDays(), "day")}` },
+      h("div", { class: "panel-head" }, h("h3", {}, `Logged time · last ${plural(this.activityDays(), "day")}`)),
       h("div", { class: "time-total" },
         h("span", { class: "big" }, formatDuration(time.total_seconds)),
         h("span", { class: "muted" }, time.total_seconds ? `from ${plural(time.entries.length, "GitLab timelog")}` : "no time logged in GitLab")),

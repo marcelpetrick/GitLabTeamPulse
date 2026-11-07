@@ -12,6 +12,9 @@ import { TeamsView } from "./js/teams.js";
 import { tickRelativeTimes, toast } from "./js/ui.js";
 
 const FAST_POLL_MS = 2000;
+// While a refresh runs, every sync step bumps data_version; reload the (large) dashboard at most
+// this often meanwhile. The final state loads as soon as the refresh ends.
+const BUSY_RELOAD_MS = 10000;
 const VIEWS = ["dashboard", "teams", "people"];
 const TITLES = { dashboard: "Dashboard", teams: "Teams", people: "People" };
 
@@ -28,6 +31,9 @@ class App {
     this.offline = false;
     this.view = null;
     this.pollTimer = null;
+    this.polling = false; // a poll is in flight
+    this.pollAgain = false; // another poll was asked for meanwhile
+    this.lastDashboardLoad = 0;
     this.peopleView = new PeopleView(document.getElementById("view-people"), this);
     this.dashboardView = new DashboardView(document.getElementById("view-dashboard"), this);
     this.teamsView = new TeamsView(document.getElementById("view-teams"), this);
@@ -51,7 +57,11 @@ class App {
       }
     });
     setInterval(() => tickRelativeTimes(), 1000);
-    document.addEventListener("visibilitychange", () => { if (!document.hidden) this.pollSoon(); });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) return;
+      tickRelativeTimes();
+      this.pollSoon();
+    });
     // Start the first view's data and the teams together with the first status request
     // instead of one after the other; a failed early fetch is simply repeated later.
     const requested = this.requestedView();
@@ -144,6 +154,7 @@ class App {
     try {
       const payload = await this.take(key, key === "users" ? api.users : api.dashboard);
       this[key] = payload;
+      if (key === "dashboard") this.lastDashboardLoad = Date.now();
       // The payload's own version: an early fetch may be older than the latest status.
       this.loadedVersion[key] = (key === "users" ? payload.users_version : payload.data_version) ?? version;
       this.renderView();
@@ -155,6 +166,11 @@ class App {
 
   async poll() {
     clearTimeout(this.pollTimer);
+    if (this.polling) {
+      this.pollAgain = true; // never two polls at once: run again right after this one
+      return;
+    }
+    this.polling = true;
     let next = 20000;
     try {
       const status = await api.status();
@@ -178,13 +194,24 @@ class App {
       this.renderChrome();
       this.dashboardView.onStatus(status);
       // Before the first route() there is no view yet; show() loads the right data itself.
-      if ((changed || wasOffline) && this.view && this.view !== "teams") await this.loadViewData();
+      const crawling = status.crawler.state === "refreshing";
+      const throttled = crawling && this.view === "dashboard" && !wasOffline
+        && Date.now() - this.lastDashboardLoad < BUSY_RELOAD_MS;
+      // loadViewData() only fetches when the view's version moved, so a version seen while
+      // throttled is still loaded by the first poll after the refresh.
+      if (this.view && this.view !== "teams" && !throttled) await this.loadViewData();
       if (anyChange && this.diagnostics.isOpen) this.diagnostics.load();
       if (!changed && this.view === "dashboard") this.dashboardView.updateRefreshButton();
     } catch {
       this.offline = true;
       next = 5000;
       renderStatusbar(this);
+    } finally {
+      this.polling = false;
+    }
+    if (this.pollAgain) {
+      this.pollAgain = false;
+      next = 0;
     }
     this.pollTimer = setTimeout(() => this.poll(), next);
   }
