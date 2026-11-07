@@ -3,6 +3,27 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.5.3 (2026-11-07): full review fixes
+
+From a review of the whole code base ([docs/review-2026-11.md](docs/review-2026-11.md)):
+
+- **Security:** writes sent by a browser from another site are refused (CSRF), and unknown
+  `Host` names are refused when bound to localhost (DNS rebinding; new
+  `TEAMPULSE_ALLOWED_HOSTS`). Secrets are redacted from logged tracebacks too.
+- **One sync owner per database:** an advisory lock file next to the database; a second
+  server only serves the cache and takes over when the owner stops, `refresh` refuses to run
+  while a server owns the sync.
+- **Sync:** a passing epic failure keeps the stored epics instead of failing the person's
+  issues and merge requests; timelog paging fails at the page cap instead of storing missing
+  hours as zero; a busy `VACUUM` no longer reports a committed cleanup as failed.
+- **Faster and lighter:** the dashboard reloads at most every 10 s during a refresh, needless
+  `data_version` bumps are gone, the work upsert uses its unique index, a failed directory call
+  cancels its sibling, and status polls no longer read the token file.
+- **UI:** requests time out after 20 s so polling cannot freeze, polls never overlap, window
+  labels follow `TEAMPULSE_ACTIVITY_DAYS`, validation errors read as text, and the
+  relative-time ticker rests in hidden tabs.
+- **Docs:** every setting is in the README (now checked by a test).
+
 ## 0.5.2 (2026-11-05): refresh dependencies
 
 - Update the Python runtime, development, and build dependency pins.

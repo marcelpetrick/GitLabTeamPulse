@@ -1,3 +1,9 @@
+# Plan — v0.5.3: full review fixes
+
+**Status: done on 2026-11-07.** The twenty findings of the full review and what was done about
+each are in [docs/review-2026-11.md](docs/review-2026-11.md); nineteen are fixed, one (sync
+writes on the event loop) is documented with measurements.
+
 # Plan — v0.5.0: meeting summary, profiling and speed-ups, E2E
 
 **Status: done, released as v0.5.0 on 2026-10-19.**
