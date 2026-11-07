@@ -505,9 +505,10 @@ class GitLabClient:
                 result.append(guarded("timelog", parse_timelog, node))
             page_info = connection.get("pageInfo") or {}
             if not page_info.get("hasNextPage"):
-                break
+                return result
             cursor = page_info.get("endCursor")
-        return result
+        # A truncated list would store the missing entries as zero hours in the history.
+        raise GitLabResponseError(f"timelogs: more than {self._max_pages} pages")
 
     async def get_user_epics(
         self,

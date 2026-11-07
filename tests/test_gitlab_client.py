@@ -591,3 +591,25 @@ async def test_an_epic_group_with_several_pages_continues_alone(client: GitLabCl
     assert sorted(e.gitlab_id for e in epics) == [1, 2, 3, 4]
     cursors = [json.loads(c.request.content)["variables"]["after"] for c in route.calls]
     assert sorted(cursors, key=str) == [None, "c1", "c2", "c3"]
+
+
+@respx.mock
+async def test_timelogs_beyond_the_page_cap_fail_instead_of_truncating(
+    client: GitLabClient,
+) -> None:
+    respx.post(f"{BASE}/api/graphql").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {
+                    "timelogs": {
+                        "nodes": [timelog_node(1)],
+                        "pageInfo": {"hasNextPage": True, "endCursor": "more"},
+                    }
+                }
+            },
+        )
+    )
+    start = datetime(2026, 9, 14, tzinfo=UTC)
+    with pytest.raises(GitLabResponseError, match="more than 5 pages"):
+        await client.get_user_timelogs("alex", start, datetime(2026, 9, 21, tzinfo=UTC))
