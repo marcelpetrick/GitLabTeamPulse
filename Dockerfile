@@ -3,7 +3,7 @@
 
 FROM ghcr.io/astral-sh/uv:0.13.7 AS uv
 
-FROM python:3.14-slim AS build
+FROM python:3.15-slim AS build
 COPY --from=uv /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
@@ -14,7 +14,7 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable
 
-FROM python:3.14-slim AS runtime
+FROM python:3.15-slim AS runtime
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="GitLab Team Pulse" \
       org.opencontainers.image.description="People-centric activity dashboard for self-managed GitLab" \
