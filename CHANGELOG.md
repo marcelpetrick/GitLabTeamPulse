@@ -3,6 +3,12 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.5.4 (2026-11-19): refresh dependencies
+
+- Update FastAPI, Gunicorn, Pydantic, Pydantic Settings and SQLAlchemy.
+- Update HTTPX2, Playwright, pytest-asyncio, Ruff, uv and the Docker registry login action.
+- Refresh the Python lockfile and keep Python 3.14 for local and container runs.
+
 ## 0.5.3 (2026-11-07): full review fixes
 
 From a review of the whole code base ([docs/review-2026-11.md](docs/review-2026-11.md)):
