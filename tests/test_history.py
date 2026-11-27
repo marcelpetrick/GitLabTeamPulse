@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from gitlab_team_pulse import retention, store
 from gitlab_team_pulse.config import Settings
+from gitlab_team_pulse.gitlab.errors import GitLabAuthError
 from gitlab_team_pulse.gitlab.models import ActivityEvent, WorkItem, history_metric
 from gitlab_team_pulse.models import (
     ActivityDaily,
@@ -242,6 +243,34 @@ async def test_milestone_progress_follows_what_the_dashboard_shows(
     assert [m.id for m in service.milestones_to_refresh()] == [m.id for m in shown]
     assigned = {mid for relation, mid in rows if relation == "assignee"}
     assert {m.id for m in shown} <= assigned
+
+
+async def test_rejected_token_retries_milestones_on_the_next_run(
+    service: SyncService, session_factory: sessionmaker[Session], clock: Clock
+) -> None:
+    await prepare(service, session_factory)
+    await service.sync_selected("scheduled")
+    client = service.client()
+    real = client.get_milestone_issues
+
+    async def rejected(milestone_id: int, **_: object) -> list[WorkItem]:
+        raise GitLabAuthError("authentication failed (401)", status=401)
+
+    client.get_milestone_issues = rejected  # type: ignore[method-assign]
+    assert await service.sync_milestones(client, "run") is False
+    with session_factory() as session:
+        state = store.get_state(session, "milestones")
+        assert state.status == "error"
+        assert "401" in (state.last_error or "")
+        assert [e.operation for e in store.list_errors(session, include_resolved=False)] == [
+            "milestones"
+        ]
+    assert service.milestones_due(clock.advance(minutes=10)) is True
+    client.get_milestone_issues = real  # type: ignore[method-assign]
+    assert await service.sync_milestones(client, "run") is True
+    with session_factory() as session:
+        assert store.get_state(session, "milestones").status == "ok"
+        assert store.list_errors(session, include_resolved=False) == []
 
 
 async def test_milestone_group_and_internal_errors_are_reported(
