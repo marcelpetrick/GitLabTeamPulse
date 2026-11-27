@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
+import pytest
 from fastapi import FastAPI
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from gitlab_team_pulse import retention, store
 from gitlab_team_pulse.config import Settings
-from gitlab_team_pulse.gitlab.errors import GitLabAuthError
+from gitlab_team_pulse.gitlab.errors import GitLabAuthError, GitLabError, GitLabUnavailableError
 from gitlab_team_pulse.gitlab.models import ActivityEvent, WorkItem, history_metric
 from gitlab_team_pulse.models import (
     ActivityDaily,
@@ -245,8 +246,19 @@ async def test_milestone_progress_follows_what_the_dashboard_shows(
     assert {m.id for m in shown} <= assigned
 
 
-async def test_rejected_token_retries_milestones_on_the_next_run(
-    service: SyncService, session_factory: sessionmaker[Session], clock: Clock
+@pytest.mark.parametrize(
+    "error",
+    [
+        GitLabAuthError("authentication failed (401)", status=401),
+        GitLabUnavailableError("server error (503)", status=503),
+    ],
+    ids=["rejected-token", "outage"],
+)
+async def test_instance_wide_errors_retry_milestones_on_the_next_run(
+    service: SyncService,
+    session_factory: sessionmaker[Session],
+    clock: Clock,
+    error: GitLabError,
 ) -> None:
     await prepare(service, session_factory)
     await service.sync_selected("scheduled")
@@ -254,14 +266,14 @@ async def test_rejected_token_retries_milestones_on_the_next_run(
     real = client.get_milestone_issues
 
     async def rejected(milestone_id: int, **_: object) -> list[WorkItem]:
-        raise GitLabAuthError("authentication failed (401)", status=401)
+        raise error
 
     client.get_milestone_issues = rejected  # type: ignore[method-assign]
     assert await service.sync_milestones(client, "run") is False
     with session_factory() as session:
         state = store.get_state(session, "milestones")
         assert state.status == "error"
-        assert "401" in (state.last_error or "")
+        assert str(error.status) in (state.last_error or "")
         assert [e.operation for e in store.list_errors(session, include_resolved=False)] == [
             "milestones"
         ]

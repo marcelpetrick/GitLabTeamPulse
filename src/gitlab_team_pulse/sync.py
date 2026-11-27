@@ -966,11 +966,13 @@ class SyncService:
         now = self.clock()
         today = now.astimezone(self.settings.tz).date()
         failures: list[str] = []
-        auth_failed = False
+        retry_next_run = False
         with self.session_factory() as session:
             for milestone, result in zip(milestones, results, strict=True):
                 if isinstance(result, GitLabError):
-                    auth_failed = auth_failed or isinstance(result, GitLabAuthError)
+                    # A rejected token or an outage says nothing about the milestone itself.
+                    instance_wide = isinstance(result, GitLabAuthError) or result.retryable
+                    retry_next_run = retry_next_run or instance_wide
                     failures.append(f"{milestone.title}: {result}")
                     continue
                 if isinstance(result, BaseException):
@@ -983,10 +985,10 @@ class SyncService:
             store.mark_attempt(state, now, run_id)
             # Per-milestone problems are diagnostics; the category itself keeps its hourly
             # cadence, so one unreadable milestone does not refetch all of them every run.
-            # A rejected token is different: it says nothing about the milestones, so the
-            # category counts as failed and is retried on the next run (a new token then
-            # clears the warning within minutes instead of an hour).
-            if auth_failed:
+            # A rejected token, a rate limit or an outage is different: it says nothing about
+            # the milestones, so the category counts as failed and is retried on the next run
+            # (a new token or a recovered GitLab clears the warning within minutes, not an hour).
+            if retry_next_run:
                 store.mark_failure(state, "; ".join(failures))
             else:
                 store.mark_success(state, now)
