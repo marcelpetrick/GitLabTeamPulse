@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Only the latest release (currently the `0.2.x` line) receives fixes. Please reproduce issues on
+Only the latest release (currently the `0.5.x` line) receives fixes. Please reproduce issues on
 the newest tag or on `master` before reporting.
 
 ## Reporting a vulnerability

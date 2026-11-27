@@ -6,7 +6,7 @@
 [![GHCR image](https://img.shields.io/badge/ghcr.io-gitlabteampulse-2496ed?logo=docker&logoColor=white)](https://github.com/marcelpetrick/GitLabTeamPulse/pkgs/container/gitlabteampulse)
 [![License: GPL v3 or later](https://img.shields.io/badge/license-GPLv3%20or%20later-blue.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776ab.svg)](https://www.python.org/)
-[![FastAPI 0.143.2](https://img.shields.io/badge/FastAPI-0.143.2-009688.svg)](https://fastapi.tiangolo.com/)
+[![FastAPI 0.165.0](https://img.shields.io/badge/FastAPI-0.165.0-009688.svg)](https://fastapi.tiangolo.com/)
 [![Coverage: 99%](https://img.shields.io/badge/coverage-99%25-brightgreen.svg)](pyproject.toml)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-fe5196.svg)](https://www.conventionalcommits.org/)
 
@@ -340,7 +340,11 @@ appended, e.g. `feat(docker): … (v0.1.0)`. See [`CHANGELOG.md`](CHANGELOG.md).
   milestones, teams and team reports: rules, counting, GitLab Free workarounds and load.
 - [`docs/features/meeting-summary.md`](docs/features/meeting-summary.md): the meeting summary:
   levels, fallbacks, item order and what is deliberately not done.
+- [`docs/features/contribution-graph.md`](docs/features/contribution-graph.md): the 12-month
+  contribution calendar and 3D skyline: counting rule, sync and rendering.
+- [`docs/review-2026-11.md`](docs/review-2026-11.md): the full review of v0.5.2, its twenty
+  findings and what was done about each.
 - [`ideas20261015.md`](ideas20261015.md) and [`plan.md`](plan.md): the reviewed feature ideas
-  and the implementation plan behind v0.4.0.
+  and the implementation plans from v0.4.0 on.
 - [`CHANGELOG.md`](CHANGELOG.md): release history.
 - [`SECURITY.md`](SECURITY.md): how to report vulnerabilities and the deployment assumptions.

@@ -25,6 +25,7 @@ Alembic on SQLite, httpx, and a vanilla ES-module frontend with no build step.
 | `retention.py` | Rolling cleanup that never removes the only good snapshot |
 | `dashboard.py` | Read model: batched API payloads with freshness metadata, attention list, milestones |
 | `teams.py` | Team payloads, team reports from the history aggregates, weekly Markdown digest |
+| `meeting.py` | On-demand meeting summary per person: delivered, unblocked, next, decisions, Markdown |
 | `about.py` | About dialog facts, read from the installed package metadata |
 | `app.py` | FastAPI factory, security headers (CSP), CSRF and host guard, static UI and JSON API |
 | `ownership.py` | Advisory lock file: exactly one process runs the background sync per database |
@@ -34,10 +35,11 @@ Alembic on SQLite, httpx, and a vanilla ES-module frontend with no build step.
 | `fake_gitlab.py` | Deterministic fake GitLab for the demo, integration and browser tests |
 | `logging_setup.py`, `gunicorn_conf.py` | Redacting stdout logging; Gunicorn with exactly one worker |
 
-`static/`: `index.html`, `app.css`, `app.js` (routing, polling, theme) and `js/`: `api.js`
+`static/`: `index.html`, `app.css`, `app.js` (routing, polling, theme), `theme-init.js` (applies
+the saved theme before first paint), `favicon.svg` and `js/`: `api.js`
 (local backend only), `dom.js` (DOM helpers), `dashboard.js`, `people.js`, `teams.js`,
 `attention.js`, `charts.js` (SVG), `contributions.js` (2D SVG and 3D canvas), `diagnostics.js`,
-`statusbar.js`, `about.js`, `format.js`, `ui.js`.
+`statusbar.js`, `about.js`, `meeting.js` (meeting summary dialog), `format.js`, `ui.js`.
 
 Other places: `tests/` (unit and integration; `tests/e2e/` for Playwright), `tools/`
 (`bump_version.py`, `screenshots.py`), `docs/`, `VISION.md`, `plan.md`, `CHANGELOG.md`.

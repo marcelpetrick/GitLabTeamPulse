@@ -197,6 +197,11 @@ flowchart TB
 | `outcomes` | selected + team members | hourly | REST merged MRs (author) and issues (assignee), incremental |
 | `milestones` | global | hourly | REST milestone issues of up to 12 active milestones of open work |
 
+A milestone that cannot be read keeps its last statistics and becomes a diagnostic, without
+breaking the hourly cadence. Errors that are about GitLab as a whole (a rejected token, a rate
+limit, an outage) are the exception: the category counts as failed and is retried on the next
+run, so a replaced token or a recovered GitLab clears the warning within minutes.
+
 Team members who are not selected only get the hourly history categories (capped by
 `TEAMPULSE_MAX_TRACKED_USERS`). History is stored as daily aggregates and finished items, never
 as raw events, and is trimmed to the 53-week calendar window. See
