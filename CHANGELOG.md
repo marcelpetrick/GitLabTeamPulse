@@ -3,6 +3,16 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.5.6 (2026-11-27): documentation refresh, outage recovery
+
+- **Sync:** an outage or rate limit during the milestone sync now also retries it on the next
+  run (as a rejected token already did), so the warning clears as soon as GitLab is back.
+
+- README: FastAPI badge shows the pinned version; the document index lists the contribution
+  graph notes and the November review.
+- AGENTS.md lists `meeting.py`, `meeting.js` and `theme-init.js`; SECURITY.md names the
+  supported `0.5.x` line; ARCHITECTURE.md explains the milestone retry after a rejected token.
+
 ## 0.5.5 (2026-11-27): dependency update and token recovery
 
 - Update HTTPX, Ruff, uv and the `setup-uv` action.

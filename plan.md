@@ -1,3 +1,11 @@
+# Plan — v0.5.5 and v0.5.6: dependencies, token recovery, docs
+
+**Status: done on 2026-11-27.** v0.5.5 updated HTTPX, Ruff, uv and `setup-uv`, and made a
+rejected token retry milestone progress on the next run instead of an hour later. v0.5.6
+brought the Markdown documents up to date with the code (module layout, badges, supported
+versions, document index, milestone retry rule) and extended that retry to outages and rate
+limits, which a browser test had caught as a race.
+
 # Plan — v0.5.3: full review fixes
 
 **Status: done on 2026-11-07.** The twenty findings of the full review and what was done about
