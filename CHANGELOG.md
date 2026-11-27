@@ -3,6 +3,12 @@
 Every commit bumps the patch version; major features bump the minor version.
 The full per-commit history is `git log --oneline` (each subject ends with its version).
 
+## 0.5.5 (2026-11-27): dependency update and token recovery
+
+- Update HTTPX, Ruff, uv and the `setup-uv` action.
+- **Sync:** when GitLab rejects the token, milestone progress is retried on the next run
+  instead of an hour later, so a new token clears the warning within minutes.
+
 ## 0.5.4 (2026-11-19): refresh dependencies
 
 - Update FastAPI, Gunicorn, Pydantic, Pydantic Settings and SQLAlchemy.
